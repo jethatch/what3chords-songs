@@ -2,7 +2,9 @@
 
 Every square metre of Earth is three guitar chords. Pick two places and play the trip between them.
 
-A rebuild of [what3chords](https://github.com/DOSull/what3chords) by David O'Sullivan and collaborators ("This is a chord. This is another. This is a third. Now form a band."). The original lets you click the map and hear that spot's three chords. This version keeps that, and adds journeys:
+> **This is a recreation based on the original [what3chords](https://github.com/DOSull/what3chords)** by David O'Sullivan, Luke Bergmann, Jim Thatcher and Nick Lally. The idea, the place-to-chords scheme, the chord table and the guitar samples come from that project. Licensing for this repository and the material it takes from the original is under discussion with the original authors; until that is settled, no licence is granted for reuse.
+
+"This is a chord. This is another. This is a third. Now form a band." The original lets you click the map and hear that spot's three chords. This version keeps that, and adds journeys:
 
 - **Start and end by name.** Type "Boston, MA" and a pin drops there. Place search uses [Nominatim](https://nominatim.org/) with [Photon](https://photon.komoot.io/) as a fallback; neither needs a key. You can also type `lat, lng`, click the map, or drag the pins.
 - **A route made of hexagons.** *Hex walk* is greedy local routing over the [H3](https://h3geo.org/) grid, computed in the browser: from each hexagon, step to the neighbour nearest the destination. *Follow roads* asks the public [OSRM](https://project-osrm.org/) demo server for a driving route and collects the hexagons along it, falling back to the hex walk when there is no road or no server. The hexagon size is chosen so the trip has a sensible number of stops (short, medium or long).
@@ -59,9 +61,13 @@ tools/           data packing script
 
 Libraries (MapLibre GL JS, h3-js, Tone.js) load from jsDelivr at pinned versions.
 
+## Licence
+
+Under discussion with the authors of the original what3chords. Neither that repository nor this one carries a licence yet, so please ask before reusing the code, the chord table (`data/chords.json`) or the guitar samples (`audio/`). The libraries this page loads keep their own licences: MapLibre GL JS (BSD-3-Clause), h3-js (Apache-2.0) and Tone.js (MIT).
+
 ## Services and credits
 
-- Concept, chord code book and guitar samples: [DOSull/what3chords](https://github.com/DOSull/what3chords). That repository carries no licence file, so check with its authors before redistributing the data or samples beyond a fork-style rebuild like this one.
+- Concept, place-to-chords scheme, chord code book and guitar samples: the original [what3chords](https://github.com/DOSull/what3chords) by David O'Sullivan, Luke Bergmann, Jim Thatcher and Nick Lally.
 - Place search: Nominatim (OpenStreetMap Foundation) and Photon (Komoot). Both are free shared services with usage policies; this page only searches when you press Find or leave the field.
 - Road routes: the OSRM demo server, which is offered without uptime guarantees and is not meant for heavy use.
 - Basemap: © CARTO, map data © OpenStreetMap contributors.
