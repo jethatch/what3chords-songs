@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>what3chords songs</title>
+  <meta name="description" content="Every square metre of Earth is three guitar chords. Pick two places and play the trip between them.">
+  <meta name="theme-color" content="#0d0d0f">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230d0d0f'/%3E%3Cpath d='M16 27C10 21 6 15 6 10.5a10 5.5 0 0 1 20 0C26 15 22 21 16 27z' fill='%23ffe14d'/%3E%3C/svg%3E">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Archivo+Black&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/maplibre-gl@5.24.0/dist/maplibre-gl.css" rel="stylesheet" integrity="sha384-uTttxo/aOKbdE5RlD/SPzSDoDmNvGlUYPjONi2MN/b7c9HPSvW07OIuyP7uL6jxK" crossorigin="anonymous">
+  <link href="./css/style.css" rel="stylesheet">
+
+  <script>
+    // Theme before first paint: ?theme=, then the last choice, then the OS.
+    (function () {
+      var theme = new URLSearchParams(location.search).get("theme");
+      try { theme = theme || localStorage.getItem("w3c-theme"); } catch (e) {}
+      if (theme !== "light" && theme !== "dark") {
+        theme = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+      }
+      document.documentElement.dataset.theme = theme;
+    })();
+  </script>
+</head>
+<body>
+  <div id="app">
+    <aside id="panel">
+      <header class="masthead">
+        <div class="masthead-row">
+          <h1>what3chords <span>songs</span></h1>
+          <div class="masthead-actions">
+            <button type="button" id="theme-toggle" class="icon-button" aria-label="Switch between dark and light">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z"/></svg>
+            </button>
+            <button type="button" id="about-open" class="icon-button" aria-label="How it works">?</button>
+          </div>
+        </div>
+        <p class="tagline">Every square metre of Earth is three guitar chords. Pick two places and play the trip between them.</p>
+      </header>
+
+      <section class="card" id="trip" aria-labelledby="trip-title">
+        <h2 id="trip-title"><span class="step">1</span>The trip</h2>
+
+        <div class="places">
+          <form class="place" id="start-form" novalidate>
+            <label for="start-input"><span class="pin pin-a" aria-hidden="true">A</span>Start</label>
+            <div class="place-row">
+              <input id="start-input" type="text" inputmode="search" enterkeyhint="search" autocomplete="off" spellcheck="false" placeholder="Boston, MA" aria-describedby="start-status">
+              <button type="submit" class="button">Find</button>
+            </div>
+            <p class="place-status" id="start-status" role="status"></p>
+            <div class="candidates" id="start-candidates"></div>
+          </form>
+
+          <button type="button" id="swap" class="icon-button swap" aria-label="Swap start and end" title="Swap start and end">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4v13m0 0-3.5-3.5M7 17l3.5-3.5M17 20V7m0 0-3.5 3.5M17 7l3.5 3.5"/></svg>
+          </button>
+
+          <form class="place" id="end-form" novalidate>
+            <label for="end-input"><span class="pin pin-b" aria-hidden="true">B</span>End</label>
+            <div class="place-row">
+              <input id="end-input" type="text" inputmode="search" enterkeyhint="search" autocomplete="off" spellcheck="false" placeholder="New York, NY" aria-describedby="end-status">
+              <button type="submit" class="button">Find</button>
+            </div>
+            <p class="place-status" id="end-status" role="status"></p>
+            <div class="candidates" id="end-candidates"></div>
+          </form>
+        </div>
+        <p class="hint">A place name, an address, or <code>lat, lng</code>. You can also click the map to hear a spot and pin it, or drag the pins. <button type="button" class="link" id="example">Try Boston → New York</button></p>
+
+        <fieldset class="choice">
+          <legend>Route</legend>
+          <div class="segmented">
+            <label><input type="radio" name="mode" value="hex" checked><span>Hex walk</span></label>
+            <label><input type="radio" name="mode" value="road"><span>Follow roads</span></label>
+          </div>
+          <p class="explain" id="mode-explain" aria-live="polite"></p>
+        </fieldset>
+
+        <fieldset class="choice">
+          <legend>Song length</legend>
+          <div class="segmented">
+            <label><input type="radio" name="length" value="short"><span>Short</span></label>
+            <label><input type="radio" name="length" value="medium" checked><span>Medium</span></label>
+            <label><input type="radio" name="length" value="long"><span>Long</span></label>
+          </div>
+          <p class="explain" id="length-explain" aria-live="polite"></p>
+        </fieldset>
+
+        <p class="summary" id="route-summary" role="status"></p>
+      </section>
+
+      <section class="card" id="band" aria-labelledby="band-title">
+        <h2 id="band-title"><span class="step">2</span>The band</h2>
+
+        <div class="field-grid">
+          <label class="field" for="signature">Time signature
+            <select id="signature"></select>
+          </label>
+          <label class="field" for="tempo-number">Tempo <span class="unit">quarter notes / min</span>
+            <span class="tempo">
+              <input id="tempo" type="range" min="50" max="220" step="1" value="120" aria-label="Tempo slider">
+              <input id="tempo-number" type="number" min="50" max="220" step="1" value="120" inputmode="numeric">
+            </span>
+          </label>
+        </div>
+
+        <label class="field" for="pattern">Strum pattern
+          <select id="pattern"></select>
+        </label>
+        <div class="pattern-viz" id="pattern-viz" role="img"></div>
+        <p class="legend" id="pattern-legend" aria-hidden="true"></p>
+
+        <fieldset class="choice">
+          <legend>Each stop plays</legend>
+          <div class="segmented">
+            <label><input type="radio" name="perstop" value="3" checked><span>All 3 chords</span></label>
+            <label><input type="radio" name="perstop" value="1"><span>1 chord</span></label>
+          </div>
+          <p class="explain" id="perstop-explain" aria-live="polite"></p>
+        </fieldset>
+
+        <label class="field" for="volume">Volume
+          <input id="volume" type="range" min="0" max="1" step="0.01" value="0.8">
+        </label>
+      </section>
+
+      <footer class="credits">
+        A rebuild of <a href="https://github.com/DOSull/what3chords" target="_blank" rel="noopener">what3chords</a> by David O’Sullivan and friends. “This is a chord. This is another. This is a third. Now form a band.”
+      </footer>
+    </aside>
+
+    <main id="stage">
+      <div id="map" aria-label="Map. Click anywhere to hear that spot’s three chords."></div>
+      <div id="toast" role="alert" hidden></div>
+    </main>
+
+    <section id="deck" aria-label="Player">
+      <div class="progress" aria-hidden="true"><div id="progress-bar"></div></div>
+      <div class="deck-main">
+        <div class="transport">
+          <button type="button" id="play" class="play" disabled aria-label="Play">
+            <svg class="icon-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"/></svg>
+            <svg class="icon-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4.5h4.5v15H6zM13.5 4.5H18v15h-4.5z"/></svg>
+          </button>
+          <button type="button" id="stop" class="icon-button" disabled aria-label="Stop and go back to the start">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor" stroke="none"/></svg>
+          </button>
+        </div>
+        <div class="deck-info">
+          <p class="deck-title" id="deck-title">Pick a start and an end to write a song.</p>
+          <p class="deck-sub" id="deck-sub"></p>
+        </div>
+        <div class="now" id="now" aria-live="off"></div>
+        <label class="follow" title="Keep the map centred on the playhead">
+          <input type="checkbox" id="follow"><span>Follow</span>
+        </label>
+      </div>
+      <ol class="chart" id="chart" aria-label="Chord chart. Select a stop to start from there."></ol>
+    </section>
+  </div>
+
+  <div id="loading"><div class="loading-box"><div class="loading-pick"></div><p id="loading-text">Tuning up…</p></div></div>
+
+  <dialog id="about" aria-labelledby="about-title">
+    <form method="dialog"><button class="icon-button dialog-close" aria-label="Close">×</button></form>
+    <h2 id="about-title">How it works</h2>
+    <h3>Three chords for every place</h3>
+    <p>The planet is divided into about 570 trillion hexagons, each under a square metre, using the <a href="https://h3geo.org/" target="_blank" rel="noopener">H3</a> grid. Each hexagon’s ID is shuffled and rewritten as a three-digit number in base 167,011 — the number of guitar chord voicings in the code book. Three digits, three chords. Click anywhere on the map to hear a spot.</p>
+    <p>The shuffle has a side effect worth listening for: a place shares its first chord with the region around it, like an accent, while its third chord changes from one doorstep to the next.</p>
+    <h3>A trip is a song</h3>
+    <p>Enter a start and an end. The route between them is a chain of hexagons, sized so the trip has a sensible number of stops, and each stop plays the chords of the place it stands on.</p>
+    <ul>
+      <li><strong>Hex walk</strong> is greedy local routing: at every hexagon, step to the neighbour nearest the destination. It runs entirely in your browser and cheerfully crosses oceans.</li>
+      <li><strong>Follow roads</strong> asks the public <a href="https://project-osrm.org/" target="_blank" rel="noopener">OSRM</a> demo server for a driving route and collects the hexagons along it. If the server is down, no road connects the two places, or a pin is far from any road, you get the hex walk instead.</li>
+    </ul>
+    <h3>Playing it</h3>
+    <p>Choose a time signature, tempo and strum pattern, then press play (or the space bar). Changes to the rhythm take effect at the next bar line, so you can rearrange the song while it plays. Select any stop in the chord chart to jump there.</p>
+    <p class="fine">On an iPhone, flip the ring/silent switch to ring if you hear nothing.</p>
+    <h3>Credits</h3>
+    <p class="fine">Concept, chord code book and guitar samples from the original <a href="https://github.com/DOSull/what3chords" target="_blank" rel="noopener">what3chords</a> by David O’Sullivan and collaborators. Place search by <a href="https://nominatim.org/" target="_blank" rel="noopener">Nominatim</a> and <a href="https://photon.komoot.io/" target="_blank" rel="noopener">Photon</a>, map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors, basemap © <a href="https://carto.com/attributions" target="_blank" rel="noopener">CARTO</a>. Built with MapLibre GL JS, h3-js and Tone.js.</p>
+  </dialog>
+
+  <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@5.24.0/dist/maplibre-gl.js" integrity="sha384-5+cfbwT0iiub6VsQAdn6yz16nr6sDiQoHx6tm4O8OVYXHYOxcffFmCJBL0dgdvGp" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/h3-js@4.5.0/dist/h3-js.umd.js" integrity="sha384-btAksX4N/Qw1lEPyJQdtZC59TR3dvM7HgYngL8bCs7Dtysie9D3TiJ0GGFZBbXAy" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tone@15.1.22/build/Tone.js" integrity="sha384-NWoslxaf/3dYwQk+uGziDYJFdsjBpVlU1WpFRexuDFcIk/5PJpCbpVXia2Uikeix" crossorigin="anonymous"></script>
+  <script type="module" src="./js/app.js"></script>
+</body>
+</html>
