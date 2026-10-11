@@ -134,6 +134,27 @@ export function buildHexRoute(start, end, maxStops) {
 }
 
 // ---------------------------------------------------------------------------
+// Recorded path
+// ---------------------------------------------------------------------------
+
+// A route that was travelled rather than planned: `entries` are the places
+// a live session stopped at, each { point: [lat, lng], res } with the
+// hexagon size in use at the time.
+export function buildPathRoute(entries) {
+  const stops = entries.map(({ point, res }) => ({ cell: h3.latLngToCell(point[0], point[1], res), point }));
+  const points = [stops[0].point];
+  const stopAt = [0];
+  for (let i = 1; i < stops.length; i++) {
+    points.push(...greatCircle(stops[i - 1].point, stops[i].point));
+    stopAt.push(points.length - 1);
+  }
+  const straightKm = haversineKm(stops[0].point, stops[stops.length - 1].point);
+  const route = finishRoute({ mode: "path", res: entries[entries.length - 1].res, stops, points, straightKm });
+  stops.forEach((stop, i) => { stop.trackKm = route.cumKm[stopAt[i]]; });
+  return route;
+}
+
+// ---------------------------------------------------------------------------
 // Road route
 // ---------------------------------------------------------------------------
 

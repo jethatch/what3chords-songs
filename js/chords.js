@@ -11,6 +11,8 @@ const DIGIT_SCRAMBLE = [0, 5, 10, 1, 6, 11, 2, 7, 12, 3, 8, 13, 4, 9, 14];
 const OPEN_STRINGS = [40, 45, 50, 55, 59, 64];
 const FRET_DIGITS = "0123456789abcdefghijklmnopqrstuvwxyz";
 
+const PITCH_CLASS = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+
 let names = [];
 let nameOfVoicing = new Uint16Array(0);
 let frets = "";
@@ -45,7 +47,21 @@ export function chordAt(index) {
   positions.forEach((fret, s) => {
     if (fret >= 0) midi.push(OPEN_STRINGS[s] + fret);
   });
-  return { index, name: names[nameOfVoicing[index]], frets: positions, midi };
+  const name = names[nameOfVoicing[index]];
+  return { index, name, frets: positions, midi, ...harmony(name) };
+}
+
+function pitchClass(note) {
+  return (PITCH_CLASS[note[0]] + (note[1] === "#" ? 1 : note[1] === "b" ? -1 : 0) + 12) % 12;
+}
+
+// What a bass player needs from a chord name such as "C#m7b5/G": the root,
+// the note in the bass (the one after the slash, else the root), and how
+// far above the root the chord's fifth sits. All as pitch classes, C = 0.
+function harmony(name) {
+  const [, root, quality, slash] = name.match(/^([A-G][#b]?)(.*?)(?:\/([A-G][#b]?))?$/);
+  const fifth = /bb5/.test(quality) ? 5 : /dim|b5/.test(quality) ? 6 : /aug|#5/.test(quality) ? 8 : 7;
+  return { root: pitchClass(root), bass: pitchClass(slash || root), fifth };
 }
 
 // The H3 cell as one number: base cell, then its 15 (scrambled) base-7 digits.

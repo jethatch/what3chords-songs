@@ -1,183 +1,102 @@
-// Guitar playback: a sampled electric guitar strummed bar by bar.
+// Playback: a scheduler that drives a Band bar by bar, plus two ways to get
+// a song out as a file (render it offline, or record it as it plays).
 //
-// Everything runs off one repeating sixteenth-note tick on the Tone.js
+// Everything runs off one repeating sixteenth-note tick on a Tone.js
 // transport. At the top of each bar the player latches the current time
-// signature and strum pattern, so changing either mid-song takes effect on
-// the next bar line; tempo changes apply immediately.
+// signature, strum pattern and band line-up, so changing any of them
+// mid-song takes effect on the next bar line; tempo changes apply at once.
 
-const SAMPLE_BASE = "./audio/guitar-electric/";
-// The upstream sample files are named an octave below what they sound.
-const SAMPLE_URLS = {
-  E2: "E1.mp3", G2: "G1.mp3", A2: "A1.mp3", C3: "C2.mp3", D3: "D2.mp3", F3: "F2.mp3",
-  G3: "G2.mp3", "A#3": "As2.mp3", B3: "B2.mp3", D4: "D3.mp3", E4: "E3.mp3", G4: "G3.mp3",
-};
+import { Band, findGuitar, loadSamples } from "./band.js";
+import {
+  PATTERNS, slotsPerBar, drumGroove, guitarSlots, drumSlots, bassSlots,
+} from "./patterns.js";
+
 const ENDING_SECONDS = 2.6;
-
-// Strum patterns, one token per eighth note (grid 8) or sixteenth (grid 16):
-//   D / d  down strum, accented / soft      U / u  up strum, accented / soft
-//   c      short choppy down strum          x      muted scratch
-//   B      bass string alone                1-4    one string, counted from the highest
-//   -      nothing (let it ring)
-export const PATTERNS = {
-  "4/4": [
-    { id: "ramones", name: "Ramones (the original)", grid: 8, steps: "D U D U D - D -" },
-    { id: "downstrokes", name: "Punk downstrokes", grid: 8, steps: "D d D d D d D d" },
-    { id: "campfire", name: "Campfire", grid: 8, steps: "D - D U - U D U" },
-    { id: "doubletime", name: "Double-time", grid: 16, steps: "D - D U - U D U D - D U - U D U" },
-    { id: "reggae", name: "Reggae chop", grid: 8, steps: "- - c - - - c -" },
-    { id: "arpeggio", name: "Fingerpicked", grid: 8, steps: "B 3 2 3 1 3 2 3" },
-    { id: "ring", name: "Let it ring", grid: 8, steps: "D - - - - - - -" },
-  ],
-  "3/4": [
-    { id: "waltz", name: "Waltz (oom-pah-pah)", grid: 8, steps: "B - d - d -" },
-    { id: "folk", name: "Folk strum", grid: 8, steps: "D - D U D U" },
-    { id: "arpeggio", name: "Fingerpicked", grid: 8, steps: "B 3 2 1 2 3" },
-    { id: "ring", name: "Let it ring", grid: 8, steps: "D - - - - -" },
-  ],
-  "6/8": [
-    { id: "rolling", name: "Rolling", grid: 8, steps: "D d u D d u" },
-    { id: "sway", name: "Slow sway", grid: 8, steps: "D - u D - u" },
-    { id: "arpeggio", name: "Fingerpicked", grid: 8, steps: "B 3 2 1 2 3" },
-    { id: "ring", name: "Let it ring", grid: 8, steps: "D - - d - -" },
-  ],
-  "2/4": [
-    { id: "boomchick", name: "Boom-chick", grid: 8, steps: "B - c -" },
-    { id: "gallop", name: "Gallop", grid: 16, steps: "D - d u D - d u" },
-    { id: "downstrokes", name: "Punk downstrokes", grid: 8, steps: "D d D d" },
-  ],
-  "5/4": [
-    { id: "takefive", name: "Take five", grid: 8, steps: "D - - U - - D - D -" },
-    { id: "downstrokes", name: "Downstrokes (3+2)", grid: 8, steps: "D d d d d d D d d d" },
-    { id: "arpeggio", name: "Fingerpicked", grid: 8, steps: "B 3 2 1 2 3 B 2 1 2" },
-  ],
-  "7/8": [
-    { id: "twotwothree", name: "2 + 2 + 3", grid: 8, steps: "D u D u D d u" },
-    { id: "downstrokes", name: "Downstrokes", grid: 8, steps: "D d D d D d d" },
-    { id: "arpeggio", name: "Fingerpicked", grid: 8, steps: "B 2 B 2 B 2 1" },
-  ],
-};
-export const SIGNATURES = Object.keys(PATTERNS);
-
-// Sixteenth-note slots in one bar.
-export function slotsPerBar(signature) {
-  const [beats, unit] = signature.split("/").map(Number);
-  return (beats * 16) / unit;
-}
-
-export function findPattern(signature, id) {
-  const list = PATTERNS[signature];
-  return list.find((pattern) => pattern.id === id) || list[0];
-}
-
-export function patternTokens(pattern) {
-  return pattern.steps.split(" ");
-}
-
-// Counting labels for a pattern's grid: "1 & 2 &", "1 e & a", or "1 2 3" in x/8.
-export function gridLabels(signature, pattern) {
-  const unit = Number(signature.split("/")[1]);
-  const perBeat = pattern.grid / unit;
-  const within = { 1: [""], 2: ["", "&"], 4: ["", "e", "&", "a"] }[perBeat];
-  return patternTokens(pattern).map((_, i) => within[i % perBeat] || String(Math.floor(i / perBeat) + 1));
-}
-
-// One entry per sixteenth slot: a token, or null where nothing is played.
-function expand(pattern) {
-  const stride = 16 / pattern.grid;
-  const slots = [];
-  for (const token of patternTokens(pattern)) {
-    slots.push(token === "-" ? null : token);
-    for (let i = 1; i < stride; i++) slots.push(null);
-  }
-  return slots;
-}
+const LOWEST_BASS_NOTE = 28; // E1, the open low string of a bass
+const DRUM_LEVELS = { X: 1, x: 0.75, ".": 0.3 };
+export const MAX_RENDER_SECONDS = 600;
 
 export function songSeconds(bars, signature, bpm) {
   return (bars * slotsPerBar(signature) * 15) / bpm + ENDING_SECONDS;
 }
 
-const jitter = (amount) => (Math.random() * 2 - 1) * amount;
+// The bass plays the chord's bass note in its lowest octave; "5" is the
+// chord's fifth above that (or its root, for a chord already standing on
+// its fifth).
+function bassPitch(chord, token) {
+  const low = LOWEST_BASS_NOTE + ((chord.bass - LOWEST_BASS_NOTE) % 12 + 12) % 12;
+  if (token === "8") return low + 12;
+  if (token !== "5") return low;
+  const fifth = (chord.root + chord.fifth) % 12;
+  const other = fifth === chord.bass ? chord.root : fifth;
+  return low + (((other - chord.bass) % 12 + 12) % 12 || 12);
+}
 
 export class Player {
-  constructor() {
+  // `transport` defaults to the live one; an offline render passes its own.
+  constructor(band, transport = Tone.getTransport(), offline = false) {
+    this.band = band;
+    this.transport = transport;
+    this.offline = offline;
     this.state = "stopped"; // "stopped" | "playing" | "paused"
     this.signature = "4/4";
     this.pattern = PATTERNS["4/4"][0];
     this.bpm = 120;
+    this.drums = false;
+    this.drumStyle = "match";
+    this.bass = false;
     this.song = null;
     this.marks = [];
     this.onEnd = () => {};
-    this.loaded = null;
-  }
-
-  // Builds the instrument and starts fetching samples. Safe to call before
-  // any user gesture; the audio context stays suspended until play().
-  load() {
-    if (this.loaded) return this.loaded;
-    this.loaded = new Promise((resolve, reject) => {
-      this.limiter = new Tone.Limiter(-2).toDestination();
-      this.reverb = new Tone.Reverb({ decay: 1.8, wet: 0.14 }).connect(this.limiter);
-      this.sampler = new Tone.Sampler({
-        urls: SAMPLE_URLS,
-        baseUrl: SAMPLE_BASE,
-        release: 0.35,
-        volume: -9,
-        onload: () => resolve(),
-        onerror: () => reject(new Error("The guitar samples failed to load.")),
-      }).connect(this.reverb);
-    });
-    return this.loaded;
   }
 
   setTempo(bpm) {
     this.bpm = bpm;
-    Tone.getTransport().bpm.value = bpm;
-  }
-
-  setVolume(level) {
-    Tone.getDestination().volume.value = level <= 0 ? -Infinity : Tone.gainToDb(level);
+    this.transport.bpm.value = bpm;
   }
 
   // song: { bars, barAt(i) -> { chord, ...anything the caller wants back from
-  // position() }, ending: chord|null }
+  // position() }, ending: chord|null }. `bars` may be Infinity.
   async play(song, fromBar = 0) {
     // Ask for the audio context first, while the click that got us here
     // still counts as a user gesture, then wait for the samples.
     const unlocked = Tone.start();
-    await this.load();
+    await this.band.ready();
     await unlocked;
+    this.begin(song, fromBar);
+    this.transport.start("+0.06");
+    this.state = "playing";
+  }
+
+  begin(song, fromBar = 0) {
     this.stop();
-    const transport = Tone.getTransport();
     this.song = song;
     this.bar = fromBar;
     this.slot = 0;
     this.endingSlots = 0;
-    this.slotTicks = transport.PPQ / 4;
-    transport.bpm.value = this.bpm;
-    transport.scheduleRepeat((time) => this.tick(time), "16n", 0);
-    transport.start("+0.06");
-    this.state = "playing";
+    this.slotTicks = this.transport.PPQ / 4;
+    this.transport.bpm.value = this.bpm;
+    this.transport.scheduleRepeat((time) => this.tick(time), "16n", 0);
   }
 
   pause() {
     if (this.state !== "playing") return;
-    Tone.getTransport().pause();
-    this.sampler.releaseAll();
+    this.transport.pause();
+    this.band.silence();
     this.state = "paused";
   }
 
   async resume() {
     if (this.state !== "paused") return;
     await Tone.start();
-    Tone.getTransport().start();
+    this.transport.start();
     this.state = "playing";
   }
 
   stop() {
-    const transport = Tone.getTransport();
-    transport.stop();
-    transport.cancel(0);
-    if (this.sampler) this.sampler.releaseAll();
+    this.transport.stop();
+    this.transport.cancel(0);
+    this.band.silence();
     clearTimeout(this.endTimer);
     this.marks = [];
     this.pendingSeek = null;
@@ -197,8 +116,7 @@ export class Player {
   }
 
   tick(time) {
-    const transport = Tone.getTransport();
-    const now = Math.round(transport.getTicksAtTime(time) / this.slotTicks);
+    const now = Math.round(this.transport.getTicksAtTime(time) / this.slotTicks);
     if (this.pendingSeek != null) {
       this.bar = this.pendingSeek;
       this.slot = 0;
@@ -210,7 +128,7 @@ export class Player {
       return;
     }
     if (this.slot === 0) {
-      this.sampler.releaseAll(time);
+      this.band.releaseGuitar(time);
       if (this.atBarLine) {
         this.bar = this.atBarLine(this.bar);
         this.atBarLine = null;
@@ -223,13 +141,25 @@ export class Player {
       this.mark = {
         bar: this.bar, start: now, info,
         slots: slotsPerBar(this.signature),
-        steps: expand(this.pattern),
+        steps: guitarSlots(this.pattern),
+        drums: this.drums ? drumSlots(drumGroove(this.signature, this.pattern, this.drumStyle)) : null,
+        bass: this.bass ? bassSlots(this.pattern) : null,
         pattern: this.pattern,
       };
       this.pushMark(this.mark);
     }
-    const token = this.mark.steps[this.slot];
-    if (token) this.playToken(token, time);
+    const { steps, drums, bass, info } = this.mark;
+    if (steps[this.slot]) this.playGuitar(steps[this.slot], time);
+    if (drums) {
+      for (const voice in drums) {
+        const hit = drums[voice][this.slot];
+        if (hit) this.band.drum(voice, time, DRUM_LEVELS[hit] || 0.75);
+      }
+    }
+    if (bass && bass[this.slot]) {
+      const token = bass[this.slot];
+      this.band.bassNote(bassPitch(info.chord, token), time, this.ringSeconds(bass) + 0.05, token === "r" ? 0.6 : 0.9);
+    }
     if (++this.slot >= this.mark.slots) {
       this.slot = 0;
       this.bar++;
@@ -241,64 +171,64 @@ export class Player {
     if (this.marks.length > 8) this.marks.shift();
   }
 
-  playToken(token, time) {
-    const { steps, slots, info } = this.mark;
-    const notes = info.chord.midi;
-    const slotSeconds = 15 / this.bpm;
+  // How long until this line plays something else, or the bar ends.
+  ringSeconds(line) {
     let ring = 1;
-    while (this.slot + ring < slots && !steps[this.slot + ring]) ring++;
-    const sustain = ring * slotSeconds;
+    while (this.slot + ring < this.mark.slots && !line[this.slot + ring]) ring++;
+    return (ring * 15) / this.bpm;
+  }
+
+  playGuitar(token, time) {
+    const notes = this.mark.info.chord.midi;
+    const slotSeconds = 15 / this.bpm;
+    const sustain = this.ringSeconds(this.mark.steps);
     const gap = Math.min(0.024, slotSeconds * 0.16);
+    const band = this.band;
 
     if (token === "B") {
-      this.pluck(notes[0], sustain + 0.4, time, 0.95);
+      band.pluck(notes[0], time, sustain + 0.4, 0.95);
     } else if (/[1-4]/.test(token)) {
-      this.pluck(notes[Math.max(0, notes.length - Number(token))], sustain + 0.4, time, 0.7);
+      band.pluck(notes[Math.max(0, notes.length - Number(token))], time, sustain + 0.4, 0.7);
     } else if (token === "x") {
-      this.strum(notes, time, 0.004, 0.035, 0.4);
+      band.strum(notes, time, 0.004, 0.035, 0.4);
     } else if (token === "c") {
-      this.strum(notes, time, gap * 0.5, 0.11, 0.95);
+      band.strum(notes, time, gap * 0.5, 0.11, 0.95);
     } else {
       const accent = token === "D" || token === "U";
       if (token === "D" || token === "d") {
-        this.strum(notes, time, gap, sustain + 0.12, accent ? 0.95 : 0.6);
+        band.strum(notes, time, gap, sustain + 0.12, accent ? 0.95 : 0.6);
       } else {
         // An up strum mostly catches the treble strings.
         const treble = notes.slice(-4).reverse();
-        this.strum(treble, time, gap * 0.8, sustain + 0.12, accent ? 0.8 : 0.5);
+        band.strum(treble, time, gap * 0.8, sustain + 0.12, accent ? 0.8 : 0.5);
       }
     }
-  }
-
-  pluck(midi, duration, time, velocity) {
-    this.sampler.triggerAttackRelease(
-      Tone.Frequency(midi, "midi").toNote(), duration, time + Math.abs(jitter(0.004)), velocity,
-    );
-  }
-
-  strum(notes, time, gap, duration, velocity) {
-    let at = time + Math.abs(jitter(0.004));
-    notes.forEach((midi, i) => {
-      const level = Math.max(0.05, Math.min(1, velocity * (1 - 0.05 * i) + jitter(0.05)));
-      this.sampler.triggerAttackRelease(Tone.Frequency(midi, "midi").toNote(), duration, at, level);
-      at += gap * (1 + jitter(0.15));
-    });
   }
 
   // One slow strum of the closing chord, left to ring, then stop.
   playEnding(time, now) {
     const slotSeconds = 15 / this.bpm;
+    const chord = this.song.ending;
     this.endingSlots = Math.max(1, Math.ceil(ENDING_SECONDS / slotSeconds));
-    if (this.song.ending) this.strum(this.song.ending.midi, time, 0.035, ENDING_SECONDS, 0.95);
+    if (chord) {
+      this.band.strum(chord.midi, time, 0.035, ENDING_SECONDS, 0.95);
+      if (this.bass) this.band.bassNote(bassPitch(chord, "R"), time, ENDING_SECONDS, 0.9);
+    }
+    if (this.drums) {
+      this.band.drum("k", time, 1);
+      this.band.drum("o", time, 0.9);
+    }
     this.pushMark({
       bar: this.song.bars, start: now, slots: this.endingSlots,
-      info: { chord: this.song.ending }, steps: [], pattern: null, ending: true,
+      info: { chord }, steps: [], pattern: null, ending: true,
     });
   }
 
   finish(time) {
-    Tone.getTransport().stop(time);
-    const delay = Math.max(0, time - Tone.immediate()) * 1000;
+    this.transport.stop(time);
+    // An offline render just runs out; nothing is listening for the end.
+    if (this.offline) return;
+    const delay = Math.max(0, time - this.transport.immediate()) * 1000;
     this.endTimer = setTimeout(() => {
       this.stop();
       this.onEnd();
@@ -308,8 +238,7 @@ export class Player {
   // Where the audible playhead is right now, or null before the first bar.
   position() {
     if (!this.marks.length) return null;
-    const transport = Tone.getTransport();
-    const slotNow = transport.getTicksAtTime(Tone.immediate()) / this.slotTicks;
+    const slotNow = this.transport.getTicksAtTime(this.transport.immediate()) / this.slotTicks;
     let mark = this.marks[0];
     for (const candidate of this.marks) if (candidate.start <= slotNow) mark = candidate;
     const into = Math.max(0, slotNow - mark.start);
@@ -322,5 +251,90 @@ export class Player {
       fraction: Math.min(1, into / mark.slots),
       ending: Boolean(mark.ending),
     };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Getting a song out as a file
+// ---------------------------------------------------------------------------
+
+function encodeWav(audioBuffer) {
+  const length = audioBuffer.length;
+  const channels = audioBuffer.numberOfChannels;
+  const view = new DataView(new ArrayBuffer(44 + length * 2));
+  const text = (offset, string) => [...string].forEach((ch, i) => view.setUint8(offset + i, ch.charCodeAt(0)));
+  text(0, "RIFF");
+  view.setUint32(4, 36 + length * 2, true);
+  text(8, "WAVEfmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, 1, true); // mono
+  view.setUint32(24, audioBuffer.sampleRate, true);
+  view.setUint32(28, audioBuffer.sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  text(36, "data");
+  view.setUint32(40, length * 2, true);
+  const data = [];
+  for (let channel = 0; channel < channels; channel++) data.push(audioBuffer.getChannelData(channel));
+  for (let i = 0; i < length; i++) {
+    let sample = 0;
+    for (let channel = 0; channel < channels; channel++) sample += data[channel][i];
+    sample = Math.max(-1, Math.min(1, sample / channels));
+    view.setInt16(44 + i * 2, sample * 32767, true);
+  }
+  return new Blob([view], { type: "audio/wav" });
+}
+
+// Renders a whole song faster than real time and resolves to a WAV Blob.
+// settings: { signature, pattern, bpm, drums, drumStyle, bass, guitar, levels }
+export async function renderSong(song, settings) {
+  const seconds = songSeconds(song.bars, settings.signature, settings.bpm) + 0.3;
+  if (!(seconds <= MAX_RENDER_SECONDS)) {
+    throw new Error(`Songs over ${MAX_RENDER_SECONDS / 60} minutes are too long to download. Pick a shorter song length or a faster tempo.`);
+  }
+  // Fetch before the offline context takes over, so building the band
+  // inside it doesn't have to wait on the network.
+  await loadSamples(findGuitar(settings.guitar).samples);
+  if (settings.bass) await loadSamples("bass");
+  const rendered = await Tone.Offline(async ({ transport }) => {
+    const band = new Band();
+    band.setLevels(settings.levels);
+    await band.setGuitar(settings.guitar);
+    if (settings.bass) await band.loadBass();
+    const player = new Player(band, transport, true);
+    player.signature = settings.signature;
+    player.pattern = settings.pattern;
+    player.bpm = settings.bpm;
+    player.drums = settings.drums;
+    player.drumStyle = settings.drumStyle;
+    player.bass = settings.bass;
+    player.begin(song);
+    transport.start(0);
+  }, seconds, 2, 44100);
+  return encodeWav(rendered.get());
+}
+
+// Records what the band plays, as it plays. The browser picks the format
+// (WebM or Ogg in Chrome and Firefox, MP4 in Safari).
+export class LiveRecorder {
+  static get supported() {
+    return Boolean(Tone.Recorder && Tone.Recorder.supported);
+  }
+
+  constructor(band) {
+    this.recorder = new Tone.Recorder();
+    band.limiter.connect(this.recorder);
+  }
+
+  start() {
+    return this.recorder.start();
+  }
+
+  // Resolves to a Blob.
+  async stop() {
+    const blob = await this.recorder.stop();
+    this.recorder.dispose();
+    return blob;
   }
 }

@@ -2,12 +2,16 @@ import { loadChords, chordsFor } from "./chords.js";
 import { chordDiagram } from "./diagram.js";
 import { geocode, formatLatLng } from "./geocode.js";
 import {
-  buildHexRoute, buildRoadRoute, RoutingError, hexSpacingKm, pointAt, trackUpTo,
+  buildHexRoute, buildRoadRoute, buildPathRoute, RoutingError, hexSpacingKm, pointAt, trackUpTo,
   stopsToGeoJSON, wrapLng,
 } from "./routing.js";
 import {
-  Player, PATTERNS, SIGNATURES, findPattern, patternTokens, gridLabels, slotsPerBar, songSeconds,
-} from "./audio.js";
+  PATTERNS, SIGNATURES, DRUM_STYLES, STYLES, findPattern, patternTokens, gridLabels, slotsPerBar,
+} from "./patterns.js";
+import { Band, GUITARS, findGuitar } from "./band.js";
+import { Player, LiveRecorder, renderSong, songSeconds } from "./audio.js";
+import { LiveSession, liveSupport, paceName } from "./live.js";
+import { encodeState, decodeHash } from "./link.js";
 
 const BASEMAPS = {
   dark: "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
@@ -19,13 +23,13 @@ const MAP_COLOURS = {
   light: { hex: "#17160f", played: "#d6004f", current: "#ffd60a", track: "rgba(23,22,15,0.5)", casing: "#fffdf8" },
 };
 const LENGTHS = {
-  short: { stops: 10, explain: "About 10 stops at most. Big hexagons, a quick sketch of the trip." },
-  medium: { stops: 28, explain: "About 28 stops at most. A proper song." },
-  long: { stops: 75, explain: "About 75 stops at most. Small hexagons, the album version." },
+  short: { name: "Short", stops: 10, explain: "About 10 stops at most. Big hexagons, a quick sketch of the trip." },
+  medium: { name: "Medium", stops: 28, explain: "About 28 stops at most. A proper song." },
+  long: { name: "Long", stops: 75, explain: "About 75 stops at most. Small hexagons, the album version." },
 };
-const MODE_EXPLAIN = {
-  hex: "Greedy local routing: from each hexagon, step to whichever neighbour is nearest the destination. Worked out in your browser, and it ignores roads, rivers and oceans.",
-  road: "Asks the public OSRM server for a driving route and plays the hexagons it passes through. If no road connects the two places, or either pin is far from any road, you get the hex walk instead.",
+const MODES = {
+  hex: { name: "Hex walk", explain: "Greedy local routing: from each hexagon, step to whichever neighbour is nearest the destination. Worked out in your browser, and it ignores roads, rivers and oceans." },
+  road: { name: "Follow roads", explain: "Asks the public OSRM server for a driving route and plays the hexagons it passes through. If no road connects the two places, or either pin is far from any road, you get the hex walk instead." },
 };
 const PER_STOP_EXPLAIN = {
   3: "Every stop plays all three of its chords, one bar each: the full what3chords address of each place you pass. Three bars per stop.",
@@ -36,7 +40,6 @@ const TOKEN_WORDS = {
   D: "down", d: "soft down", U: "up", u: "soft up", c: "chop", x: "mute", B: "bass", "-": "rest",
   1: "string 1", 2: "string 2", 3: "string 3", 4: "string 4",
 };
-
 // What each glyph in the strum display means, in the order they're listed.
 const LEGEND = [
   ["↓", /[Dd]/, "down"],
@@ -52,6 +55,7 @@ const EXAMPLE = {
   start: { lat: 42.35883, lng: -71.05783, label: "Boston, Massachusetts" },
   end: { lat: 40.71273, lng: -74.00602, label: "New York, New York" },
 };
+const SECTIONS = ["more-route", "more-rhythm", "more-band"];
 
 const $ = (id) => document.getElementById(id);
 const escapeHTML = (text) => String(text).replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
@@ -61,25 +65,37 @@ const state = {
   end: null,
   mode: "hex",
   length: "medium",
+  // A recorded route (from a live session or a shared link) that stands in
+  // for start and end: [{ point: [lat, lng], res, chords }].
+  path: null,
+  pathShared: false, // whether the path may be written into the address bar
+  pathTitle: "Recorded trip",
   signature: "4/4",
   patternId: "ramones",
   bpm: 120,
   perStop: 3,
-  volume: 0.8,
+  guitar: "electric",
+  drums: false,
+  drumStyle: "match",
+  bass: false,
+  levels: { guitar: 0.8, bass: 0.8, drums: 0.8 },
   route: null,
   routePending: false, // a road route has been asked for and isn't back yet
   cueStop: 0,
-  playing: null, // null | "route" | "spot"
+  playing: null, // null | "route" | "spot" | "live"
   finished: false,
 };
 
-const player = new Player();
+const band = new Band();
+const player = new Player(band);
 let map;
 let theme = document.documentElement.dataset.theme;
 let routeRequest = 0;
 let routeAbort = null;
 let song = null;
 let spot = null; // { popup, chords } for the last clicked point
+let live = null; // { session, recorder, started, fix } while a live session runs
+let recordingUrl = null;
 const markers = { start: null, end: null, playhead: null };
 const places = {
   start: { input: $("start-input"), status: $("start-status"), candidates: $("start-candidates"), form: $("start-form"), lastQuery: "", searching: null, abort: null },
@@ -87,19 +103,23 @@ const places = {
 };
 
 // ---------------------------------------------------------------------------
-// Formatting
+// Small helpers
 // ---------------------------------------------------------------------------
 
 function formatKm(km) {
   if (km >= 100) return `${Math.round(km).toLocaleString()} km`;
   if (km >= 1) return `${km.toFixed(1)} km`;
-  if (km >= 0.001) return `${Math.round(km * 1000)} m`;
+  if (km >= 0.001 || km === 0) return `${Math.round(km * 1000)} m`;
   return `${Math.round(km * 100000)} cm`;
 }
 
 function formatClock(seconds) {
   const s = Math.max(0, Math.round(seconds));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+function formatSize(bytes) {
+  return bytes >= 1e6 ? `${(bytes / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1e3))} KB`;
 }
 
 let toastTimer;
@@ -109,6 +129,30 @@ function toast(message) {
   el.hidden = false;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { el.hidden = true; }, 7000);
+}
+
+function remember(key, value) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch (error) { /* private mode */ }
+}
+
+function recall(key) {
+  try { return JSON.parse(localStorage.getItem(key)); } catch (error) { return null; }
+}
+
+function saveBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+function songTitle() {
+  if (state.path) return state.pathTitle;
+  return `${state.start.label} → ${state.end.label}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -124,45 +168,15 @@ function writeHash() {
 }
 
 function flushHash() {
-  const params = new URLSearchParams();
-  for (const [key, place] of [["a", state.start], ["b", state.end]]) {
-    if (!place) continue;
-    params.set(key, `${place.lat.toFixed(5)},${place.lng.toFixed(5)}`);
-    params.set(`${key}n`, place.label);
-  }
-  // Settings only appear once they differ from the defaults.
-  if (state.mode !== "hex") params.set("m", state.mode);
-  if (state.length !== "medium") params.set("l", state.length);
-  if (state.signature !== "4/4") params.set("ts", state.signature.replace("/", "-"));
-  if (state.patternId !== PATTERNS[state.signature][0].id) params.set("p", state.patternId);
-  if (state.bpm !== 120) params.set("bpm", state.bpm);
-  if (state.perStop !== 3) params.set("c", state.perStop);
-  const hash = params.toString();
+  clearTimeout(hashTimer);
+  // A travelled route only goes into the address once its owner has chosen
+  // to share it (or it arrived in a link in the first place).
+  const hash = encodeState(state, state.pathShared);
   try {
     history.replaceState(null, "", `${location.pathname}${location.search}${hash ? `#${hash}` : ""}`);
   } catch (error) {
     // The link just goes a little stale; nothing else depends on it.
   }
-}
-
-function readHash() {
-  const params = new URLSearchParams(location.hash.slice(1));
-  for (const [key, which] of [["a", "start"], ["b", "end"]]) {
-    const match = (params.get(key) || "").match(/^(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)$/);
-    if (!match) continue;
-    const lat = parseFloat(match[1]);
-    const lng = parseFloat(match[2]);
-    if (Math.abs(lat) > 90 || Math.abs(lng) > 180) continue;
-    state[which] = { lat, lng, label: (params.get(`${key}n`) || formatLatLng(lat, lng)).slice(0, 120) };
-  }
-  if (Object.hasOwn(MODE_EXPLAIN, params.get("m") || "")) state.mode = params.get("m");
-  if (Object.hasOwn(LENGTHS, params.get("l") || "")) state.length = params.get("l");
-  const signature = (params.get("ts") || "").replace("-", "/");
-  if (SIGNATURES.includes(signature)) state.signature = signature;
-  state.patternId = findPattern(state.signature, params.get("p")).id;
-  const bpm = parseInt(params.get("bpm"), 10);
-  if (bpm >= 50 && bpm <= 220) state.bpm = bpm;
-  if (params.get("c") === "1") state.perStop = 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -204,14 +218,19 @@ function initMap() {
   });
   map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
   const locate = new maplibregl.GeolocateControl({ fitBoundsOptions: { maxZoom: 14 } });
-  locate.on("geolocate", (fix) => openSpot(fix.coords.latitude, fix.coords.longitude, false));
+  locate.on("geolocate", (fix) => {
+    if (!live) openSpot(fix.coords.latitude, fix.coords.longitude, false);
+  });
   map.addControl(locate, "top-right");
   map.touchZoomRotate.disableRotation();
   map.dragRotate.disable();
   map.keyboard.disableRotation();
 
   map.on("style.load", addRouteLayers);
-  map.on("click", (event) => openSpot(event.lngLat.lat, wrapLng(event.lngLat.lng), true));
+  map.on("click", (event) => {
+    // A live session owns the sound and the route; nothing to pin.
+    if (!live) openSpot(event.lngLat.lat, wrapLng(event.lngLat.lng), true);
+  });
   map.on("dragstart", (event) => {
     if (event.originalEvent && $("follow").checked) $("follow").checked = false;
   });
@@ -222,8 +241,13 @@ function initMap() {
 function addRouteLayers() {
   if (map.getSource("stops")) return;
   const colours = MAP_COLOURS[theme];
-  const labels = map.getStyle().layers.find((layer) => layer.type === "symbol");
-  const before = labels ? labels.id : undefined;
+  // Above every road, building and border the basemap draws, below its
+  // labels. (The two basemaps put their first label layer in different
+  // places, so look for the last thing that isn't a label.)
+  const layers = map.getStyle().layers;
+  let top = layers.length - 1;
+  while (top >= 0 && layers[top].type === "symbol") top--;
+  const before = layers[top + 1] ? layers[top + 1].id : undefined;
   const empty = { type: "FeatureCollection", features: [] };
 
   map.addSource("stops", { type: "geojson", data: empty });
@@ -243,7 +267,7 @@ function addRouteLayers() {
   }, before);
   map.addLayer({
     id: "stops-outline", type: "line", source: "stops",
-    paint: { "line-color": colours.hex, "line-width": 1.2, "line-opacity": 0.75 },
+    paint: { "line-color": colours.hex, "line-width": 1.4, "line-opacity": 0.9 },
   }, before);
   map.addLayer({
     id: "stops-current-outline", type: "line", source: "stops", filter: ["==", ["get", "i"], -1],
@@ -341,12 +365,16 @@ function setStatus(which, text, isError = false) {
 function setPlace(which, place, { move = true } = {}) {
   const ui = places[which];
   if (ui.abort) ui.abort.abort();
+  // Choosing a place starts a planned trip; a recorded one makes way.
+  state.path = null;
+  state.pathShared = false;
   state[which] = place;
   ui.input.value = place ? place.label : "";
   ui.lastQuery = ui.input.value.trim();
   ui.candidates.replaceChildren();
   setStatus(which, "");
   setMarker(which);
+  hideArrival();
   if (spot) spot.popup.remove();
   if (place && move && !(state.start && state.end)) {
     map.flyTo({ center: [place.lng, clampToMap(place.lat)], zoom: Math.max(map.getZoom(), 10), duration: 900 });
@@ -428,6 +456,16 @@ function showCandidates(which, results, chosen, open = false) {
 // Route
 // ---------------------------------------------------------------------------
 
+function pathRoute() {
+  const route = buildPathRoute(state.path);
+  route.stops.forEach((stop, i) => {
+    const entry = state.path[i];
+    if (!entry.chords) entry.chords = chordsFor(entry.point[0], entry.point[1]);
+    stop.chords = entry.chords;
+  });
+  return route;
+}
+
 async function rebuildRoute({ fit = true } = {}) {
   const request = ++routeRequest;
   if (routeAbort) routeAbort.abort();
@@ -439,84 +477,88 @@ async function rebuildRoute({ fit = true } = {}) {
   state.route = null;
   state.routePending = false;
 
-  if (!state.start || !state.end) {
-    drawRoute();
-    renderRoute();
-    return;
-  }
-  const a = [state.start.lat, state.start.lng];
-  const b = [state.end.lat, state.end.lng];
-  const maxStops = LENGTHS[state.length].stops;
-  let route;
-  let note = "";
-  if (state.mode === "road") {
-    routeAbort = new AbortController();
-    state.routePending = true;
-    drawRoute();
-    renderRoute();
-    try {
-      route = await buildRoadRoute(a, b, maxStops, routeAbort.signal);
-    } catch (error) {
+  if (state.path) {
+    state.route = pathRoute();
+  } else if (state.start && state.end) {
+    const a = [state.start.lat, state.start.lng];
+    const b = [state.end.lat, state.end.lng];
+    const maxStops = LENGTHS[state.length].stops;
+    let route;
+    let note = "";
+    if (state.mode === "road") {
+      routeAbort = new AbortController();
+      state.routePending = true;
+      drawRoute();
+      renderRoute();
+      try {
+        route = await buildRoadRoute(a, b, maxStops, routeAbort.signal);
+      } catch (error) {
+        if (request !== routeRequest) return;
+        if (!(error instanceof RoutingError)) console.warn(error);
+        const why = error instanceof RoutingError ? error.message : "road routing failed";
+        note = `Couldn’t follow roads: ${why}. Walked the hexagons instead.`;
+      }
       if (request !== routeRequest) return;
-      if (!(error instanceof RoutingError)) console.warn(error);
-      const why = error instanceof RoutingError ? error.message : "road routing failed";
-      note = `Couldn’t follow roads: ${why}. Walked the hexagons instead.`;
+      state.routePending = false;
     }
-    if (request !== routeRequest) return;
-    state.routePending = false;
+    if (!route) route = buildHexRoute(a, b, maxStops);
+    for (const stop of route.stops) stop.chords = chordsFor(stop.point[0], stop.point[1]);
+    route.note = note;
+    state.route = route;
   }
-  if (!route) route = buildHexRoute(a, b, maxStops);
-  for (const stop of route.stops) stop.chords = chordsFor(stop.point[0], stop.point[1]);
-  route.note = note;
-  state.route = route;
   drawRoute();
   renderRoute();
   if (fit) fitRoute();
 }
 
-function routeTitle() {
-  return `${state.start.label} → ${state.end.label}`;
-}
-
 function renderRoute() {
   const route = state.route;
   const summary = $("route-summary");
-  $("play").disabled = !route;
-  $("stop").disabled = !route;
+  $("play").disabled = !route && !live;
+  $("stop").disabled = !route && !live;
+  $("share").disabled = !route || Boolean(live);
+  $("download").disabled = !route || Boolean(live);
   summary.classList.toggle("busy", state.routePending);
+  renderSummaries();
   if (!route) {
     summary.textContent = state.routePending ? "Finding a road route…" : "";
-    $("deck-title").textContent = state.routePending
-      ? "Finding a road route…"
-      : state.start || state.end
-        ? `Now add ${state.start ? "an end" : "a start"} to write a song.`
-        : "Pick a start and an end to write a song.";
+    $("deck-title").textContent = live
+      ? "Finding you…"
+      : state.routePending
+        ? "Finding a road route…"
+        : state.start || state.end
+          ? `Now add ${state.start ? "an end" : "a start"} to write a song.`
+          : "Pick a start and an end to write a song.";
     $("deck-sub").textContent = "";
     $("chart").replaceChildren();
     $("now").replaceChildren();
     $("progress-bar").style.width = "0";
     return;
   }
-  const across = formatKm(hexSpacingKm(route.res));
   const count = `${route.stops.length} ${route.stops.length === 1 ? "stop" : "stops"}`;
-  const distance = route.straightKm === 0
-    ? "no distance at all"
-    : route.mode === "road"
-      ? `${formatKm(route.distanceKm)} by road`
-      : `${formatKm(route.straightKm)} as the crow flies`;
   const notes = [];
-  if (route.note) notes.push(route.note);
-  if (route.mode === "road" && route.snapKm) {
-    const far = Math.max(...route.snapKm);
-    if (far > Math.max(1, route.distanceKm * 0.02)) {
-      notes.push(`The nearest road is ${formatKm(far)} from ${route.snapKm[0] >= route.snapKm[1] ? "the start" : "the end"}; the line jumps straight to it.`);
+  let facts;
+  if (route.mode === "path") {
+    facts = `${formatKm(route.distanceKm)} travelled`;
+  } else {
+    const distance = route.straightKm === 0
+      ? "no distance at all"
+      : route.mode === "road"
+        ? `${formatKm(route.distanceKm)} by road`
+        : `${formatKm(route.straightKm)} as the crow flies`;
+    facts = `${distance} · hexagons about ${formatKm(hexSpacingKm(route.res))} across`;
+    if (route.note) notes.push(route.note);
+    if (route.mode === "road" && route.snapKm) {
+      const far = Math.max(...route.snapKm);
+      if (far > Math.max(1, route.distanceKm * 0.02)) {
+        notes.push(`The nearest road is ${formatKm(far)} from ${route.snapKm[0] >= route.snapKm[1] ? "the start" : "the end"}; the line jumps straight to it.`);
+      }
     }
+    if (route.straightKm === 0) notes.push("Start and end are the same spot, so this is a very short song.");
   }
-  if (route.straightKm === 0) notes.push("Start and end are the same spot, so this is a very short song.");
-  summary.innerHTML =
-    `<strong>${count}</strong> · ${escapeHTML(distance)} · hexagons about ${escapeHTML(across)} across` +
+  summary.innerHTML = `<strong>${count}</strong> · ${escapeHTML(facts)}` +
     notes.map((text) => `<span class="note">${escapeHTML(text)}</span>`).join("");
-  $("deck-title").textContent = routeTitle();
+  $("deck-title").textContent = live && !live.started ? "Finding you…" : songTitle();
   renderChart();
   renderSongInfo();
   renderPlayhead();
@@ -528,7 +570,7 @@ function renderChart() {
     const li = document.createElement("li");
     const button = document.createElement("button");
     button.type = "button";
-    const shown = state.perStop === 3 ? [0, 1, 2] : [i % 3];
+    const shown = state.perStop === 3 || live ? [0, 1, 2] : [i % 3];
     button.innerHTML = `<span class="n">${i + 1}</span>` +
       shown.map((which) => `<span class="c" data-which="${which}">${escapeHTML(stop.chords[which].name)}</span>`).join("");
     button.setAttribute("aria-label", `Stop ${i + 1}: ${shown.map((which) => stop.chords[which].name).join(", ")}`);
@@ -560,8 +602,17 @@ function totalBars() {
 
 function renderSongInfo(position) {
   if (!state.route) return;
-  const total = songSeconds(totalBars(), state.signature, state.bpm);
   const stops = state.route.stops.length;
+  const count = `${stops} ${stops === 1 ? "stop" : "stops"}`;
+  if (live) {
+    const fix = live.fix;
+    const gps = fix ? ` · ${paceName(fix.res)} · GPS ±${Math.round(fix.accuracy)} m` : "";
+    $("deck-sub").textContent = live.started
+      ? `Live · ${count} · ${formatKm(state.route.distanceKm)}${gps}`
+      : "Waiting for a location fix…";
+    return;
+  }
+  const total = songSeconds(totalBars(), state.signature, state.bpm);
   if (position && state.playing === "route") {
     const barSeconds = (slotsPerBar(state.signature) * 15) / state.bpm;
     const elapsed = position.ending ? total : (position.bar + position.fraction) * barSeconds;
@@ -569,7 +620,7 @@ function renderSongInfo(position) {
     $("deck-sub").textContent = `Stop ${stop}/${stops} · ${formatClock(elapsed)} / ${formatClock(total)}`;
   } else {
     const from = state.cueStop > 0 ? ` · starts at stop ${state.cueStop + 1}` : "";
-    $("deck-sub").textContent = `${stops} ${stops === 1 ? "stop" : "stops"} · ${totalBars()} bars · about ${formatClock(total)}${from}`;
+    $("deck-sub").textContent = `${count} · ${totalBars()} bars · about ${formatClock(total)}${from}`;
   }
 }
 
@@ -592,26 +643,41 @@ function makeSong() {
 }
 
 function setPlayButton() {
-  const playing = state.playing === "route" && player.state === "playing";
+  const playing = (state.playing === "route" || state.playing === "live") && player.state === "playing";
   $("play").classList.toggle("playing", playing);
   $("play").setAttribute("aria-label", playing ? "Pause" : "Play");
+  $("stop").setAttribute("aria-label", live ? "End the live session" : "Stop and go back to the start");
 }
 
 async function startAudio(run) {
   const button = $("play");
   button.classList.add("busy");
+  // A download that failed earlier gets another go each time play is pressed.
+  if (band.wanted !== state.guitar) band.setGuitar(state.guitar).catch(() => {});
+  if (state.bass) band.loadBass().catch(() => {});
   try {
     await run();
+    return true;
   } catch (error) {
     console.warn(error);
     toast(error.message || "Audio couldn’t start in this browser.");
     stopPlayback();
+    return false;
   } finally {
     button.classList.remove("busy");
   }
 }
 
 async function togglePlay() {
+  hideArrival();
+  if (live) {
+    // During a live session the button only mutes and unmutes the band.
+    if (state.playing !== "live") return;
+    if (player.state === "playing") player.pause();
+    else await startAudio(() => player.resume());
+    setPlayButton();
+    return;
+  }
   if (!state.route) return;
   if (state.playing === "route" && player.state === "playing") {
     player.pause();
@@ -641,6 +707,10 @@ function stopPlayback() {
 }
 
 function stopAndRewind() {
+  if (live) {
+    endLive();
+    return;
+  }
   stopPlayback();
   state.cueStop = 0;
   state.finished = false;
@@ -649,7 +719,7 @@ function stopAndRewind() {
 }
 
 function jumpToStop(index) {
-  if (!state.route) return;
+  if (!state.route || live) return;
   state.finished = false;
   if (state.playing === "route" && player.state === "playing") {
     player.seek(index * song.per);
@@ -680,12 +750,65 @@ let shownStop = null; // "stop:which" currently painted in the chart and cards
 let shownKm = null; // how far the travelled line has been drawn
 let shownSlot = null;
 
+function placePlayhead(lat, lng, visible) {
+  if (!markers.playhead) markers.playhead = new maplibregl.Marker({ element: playheadElement(), anchor: "center" });
+  markers.playhead.setLngLat([lng, clampToMap(lat)]).addTo(map);
+  const el = markers.playhead.getElement();
+  el.style.visibility = visible ? "" : "hidden";
+  el.classList.toggle("live", Boolean(live));
+}
+
+function drawTravelled(route, km) {
+  // Redrawing the travelled line is the one costly step, so only do it
+  // once the playhead has visibly moved on.
+  const moved = shownKm === null || Math.abs(km - shownKm) >= route.distanceKm / 1500;
+  if ((moved || km === 0 || km === route.distanceKm) && km !== shownKm && map.getSource("travelled")) {
+    map.getSource("travelled").setData(lineFeature(trackUpTo(route, km)));
+    shownKm = km;
+  }
+}
+
+// Marks which stop and chord are up: hexagons on the map, the chord cards
+// and the chart.
+function showStop(route, stop, which, played, sounding) {
+  const key = `${stop}:${which}:${played}:${sounding}:${route.stops.length}`;
+  if (key === shownStop) return;
+  shownStop = key;
+  const stops = route.stops;
+  const current = played > stops.length - 1 ? -1 : stop;
+  if (map.getLayer("stops-played")) {
+    map.setFilter("stops-played", ["<", ["get", "i"], played]);
+    map.setFilter("stops-current", ["==", ["get", "i"], current]);
+    map.setFilter("stops-current-outline", ["==", ["get", "i"], current]);
+  }
+  renderNow(stops[stop], which, sounding);
+  const items = $("chart").children;
+  for (let i = 0; i < items.length; i++) {
+    items[i].classList.toggle("played", i < played);
+    items[i].classList.toggle("current", i === current);
+    for (const span of items[i].querySelectorAll(".c")) {
+      span.classList.toggle("on", i === current && sounding && Number(span.dataset.which) === which);
+    }
+  }
+  const item = items[stop];
+  if (item && sounding) {
+    const chart = $("chart");
+    const target = item.offsetLeft - chart.offsetLeft - chart.clientWidth / 2 + item.offsetWidth / 2;
+    chart.scrollTo({ left: target, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+  }
+}
+
 // Paints everything that depends on where the song is: marker, hexagons,
 // progress line, chord cards and chart. With no position, shows the cue.
 function renderPlayhead(position) {
   const route = state.route;
   if (!route) {
     if (markers.playhead) markers.playhead.remove();
+    return;
+  }
+  if (live) {
+    // Until the first fix, the old trip is still on screen; leave it be.
+    if (live.started) renderLive(position);
     return;
   }
   const stops = route.stops;
@@ -716,46 +839,26 @@ function renderPlayhead(position) {
   }
 
   const at = pointAt(route, km);
-  if (!markers.playhead) markers.playhead = new maplibregl.Marker({ element: playheadElement(), anchor: "center" });
-  markers.playhead.setLngLat([at[1], clampToMap(at[0])]).addTo(map);
   // Parked on the start or end it would only hide the pin.
-  markers.playhead.getElement().style.visibility = position || (km > 0 && km < route.distanceKm) ? "" : "hidden";
+  placePlayhead(at[0], at[1], Boolean(position) || (km > 0 && km < route.distanceKm));
   if (position && $("follow").checked) map.jumpTo({ center: [at[1], at[0]] });
-
-  // Redrawing the travelled line is the one costly step, so only do it
-  // once the playhead has visibly moved on.
-  const moved = shownKm === null || Math.abs(km - shownKm) >= route.distanceKm / 1500;
-  if ((moved || km === 0 || km === route.distanceKm) && km !== shownKm && map.getSource("travelled")) {
-    map.getSource("travelled").setData(lineFeature(trackUpTo(route, km)));
-    shownKm = km;
-  }
+  drawTravelled(route, km);
   const total = position && !position.ending ? (position.bar + position.fraction) / song.bars : played / stops.length;
   $("progress-bar").style.width = `${Math.min(100, total * 100).toFixed(2)}%`;
+  showStop(route, stop, which, played, Boolean(position));
+}
 
-  const key = `${stop}:${which}:${played}`;
-  if (key === shownStop) return;
-  shownStop = key;
-  const current = played > last ? -1 : stop;
-  if (map.getLayer("stops-played")) {
-    map.setFilter("stops-played", ["<", ["get", "i"], played]);
-    map.setFilter("stops-current", ["==", ["get", "i"], current]);
-    map.setFilter("stops-current-outline", ["==", ["get", "i"], current]);
-  }
-  renderNow(stops[stop], which, Boolean(position));
-  const items = $("chart").children;
-  for (let i = 0; i < items.length; i++) {
-    items[i].classList.toggle("played", i < played);
-    items[i].classList.toggle("current", i === current);
-    for (const span of items[i].querySelectorAll(".c")) {
-      span.classList.toggle("on", i === current && Boolean(position) && Number(span.dataset.which) === which);
-    }
-  }
-  const item = items[stop];
-  if (item && position) {
-    const chart = $("chart");
-    const target = item.offsetLeft - chart.offsetLeft - chart.clientWidth / 2 + item.offsetWidth / 2;
-    chart.scrollTo({ left: target, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
-  }
+// A live session has no end to move towards: the marker is wherever the
+// device is, and the newest stop is the one being played.
+function renderLive(position) {
+  const route = state.route;
+  const stop = route.stops.length - 1;
+  const fix = live.fix;
+  if (fix) placePlayhead(fix.point[0], fix.point[1], true);
+  drawTravelled(route, route.distanceKm);
+  $("progress-bar").style.width = "0";
+  const sounding = Boolean(position) && player.state === "playing";
+  showStop(route, stop, position ? position.info.which : 0, stop, sounding);
 }
 
 function chordCard(chord, className = "") {
@@ -767,7 +870,7 @@ function chordCard(chord, className = "") {
 // The three chords of the stop under the playhead.
 function renderNow(stop, which, sounding) {
   $("now").innerHTML = stop.chords.map((chord, i) => {
-    const idle = state.perStop === 1 && i !== which;
+    const idle = state.perStop === 1 && !live && i !== which;
     return chordCard(chord, i === which && sounding ? "on" : idle ? "idle" : "");
   }).join("");
 }
@@ -811,17 +914,17 @@ function frame() {
   const position = player.position();
   if (!position) return;
   const struck = highlightPattern(position);
-  if (state.playing === "route") {
-    renderPlayhead(position);
-    renderSongInfo(position);
-    if (struck && markers.playhead) {
-      const el = markers.playhead.getElement();
-      el.classList.remove("hit");
-      void el.offsetWidth;
-      el.classList.add("hit");
-    }
-  } else {
+  if (state.playing === "spot") {
     highlightSpot(position.ending ? 0 : position.info.which);
+    return;
+  }
+  renderPlayhead(position);
+  if (state.playing === "route") renderSongInfo(position);
+  if (struck && markers.playhead) {
+    const el = markers.playhead.getElement();
+    el.classList.remove("hit");
+    void el.offsetWidth;
+    el.classList.add("hit");
   }
 }
 
@@ -836,7 +939,7 @@ function highlightSpot(which) {
 }
 
 async function playSpot() {
-  if (!spot) return;
+  if (!spot || live) return;
   // Hearing a spot interrupts the song; remember the stop so Play picks
   // it up again from there.
   const position = state.playing === "route" ? player.position() : null;
@@ -887,6 +990,263 @@ function openSpot(lat, lng, autoplay) {
 }
 
 // ---------------------------------------------------------------------------
+// Live session: the song follows the device
+// ---------------------------------------------------------------------------
+
+function setLiveStatus(text, isError = false) {
+  $("live-status").textContent = text;
+  $("live-status").classList.toggle("error", isError);
+}
+
+function renderLiveControls() {
+  const on = Boolean(live);
+  $("live-label").textContent = on ? "End session" : "Go live";
+  $("live-toggle").classList.toggle("on", on);
+  $("live-pitch").hidden = on;
+  $("live-note").hidden = !on;
+  $("trip-fields").disabled = on;
+  $("trip").classList.toggle("is-live", on);
+  setPlayButton();
+}
+
+function startLive() {
+  const problem = liveSupport();
+  if (problem) {
+    setLiveStatus(problem, true);
+    return;
+  }
+  stopPlayback();
+  hideArrival();
+  if (spot) spot.popup.remove();
+  // Unlock audio while this click still counts; the first note has to wait
+  // for a position.
+  Tone.start();
+  live = {
+    session: new LiveSession({ onStop: onLiveStop, onFix: onLiveFix, onError: onLiveError }),
+    recorder: null,
+    started: false,
+    fix: null,
+  };
+  setLiveStatus("Finding you…");
+  $("live-download").hidden = true;
+  renderLiveControls();
+  renderRoute();
+  live.session.start();
+}
+
+function onLiveError(message, fatal) {
+  if (!live) return;
+  if (fatal) {
+    endLive();
+    setLiveStatus(message, true);
+  } else {
+    setLiveStatus(message);
+  }
+}
+
+function onLiveFix(fix) {
+  if (!live) return;
+  const first = !live.fix;
+  live.fix = fix;
+  if (first || $("follow").checked) {
+    // Close enough to see a few hexagons around you.
+    const metresPerPixel = (hexSpacingKm(fix.res) * 1000) / 110;
+    const zoom = Math.log2((78271.5 * Math.cos((fix.point[0] * Math.PI) / 180)) / metresPerPixel);
+    map.easeTo({ center: [fix.point[1], fix.point[0]], zoom: first ? Math.min(19, zoom) : map.getZoom(), duration: 600 });
+  }
+  if (first) $("follow").checked = true;
+  renderSongInfo();
+  if (player.state !== "playing") renderPlayhead();
+}
+
+function onLiveStop(stop) {
+  if (!live) return;
+  const entry = { point: stop.point, res: stop.res, chords: chordsFor(stop.point[0], stop.point[1]) };
+  if (live.started) {
+    state.path.push(entry);
+  } else {
+    // The trip that was on screen gives way to the one being travelled.
+    live.started = true;
+    routeRequest++;
+    if (routeAbort) routeAbort.abort();
+    for (const which of ["start", "end"]) {
+      state[which] = null;
+      places[which].input.value = "";
+      places[which].lastQuery = "";
+      places[which].candidates.replaceChildren();
+      setStatus(which, "");
+      setMarker(which);
+    }
+    state.path = [entry];
+    state.pathShared = false;
+    state.pathTitle = "Live session";
+    state.routePending = false;
+    state.cueStop = 0;
+    state.finished = false;
+    setLiveStatus("");
+    writeHash();
+    beginLiveSound();
+  }
+  state.route = pathRoute();
+  drawRoute();
+  renderRoute();
+}
+
+async function beginLiveSound() {
+  const session = live;
+  state.playing = "live";
+  const started = await startAudio(() => player.play({
+    bars: Infinity,
+    // Always the newest stop; its three chords go round until there's a newer one.
+    barAt: (bar) => {
+      const stops = state.route.stops;
+      const which = bar % 3;
+      return { chord: stops[stops.length - 1].chords[which], stop: stops.length - 1, which };
+    },
+    ending: null,
+  }));
+  if (live !== session) {
+    // Ended while the samples were loading.
+    if (started && !live) stopPlayback();
+    return;
+  }
+  if (!started) {
+    state.playing = "live";
+    setLiveStatus("The sound didn’t start. Tap play to try again.", true);
+  } else if (LiveRecorder.supported) {
+    try {
+      session.recorder = new LiveRecorder(band);
+      session.recorder.start();
+    } catch (error) {
+      session.recorder = null;
+    }
+  }
+  setPlayButton();
+}
+
+async function endLive() {
+  const session = live;
+  if (!session) return;
+  live = null;
+  session.session.stop();
+  stopPlayback();
+  renderLiveControls();
+  $("follow").checked = false;
+  if (!session.started) {
+    setLiveStatus("");
+    renderRoute();
+    return;
+  }
+  const stops = state.path.length;
+  setLiveStatus(`Saved as a trip of ${stops} ${stops === 1 ? "stop" : "stops"}. Play it again, change the band, or share it.`);
+  renderRoute();
+  fitRoute();
+  if (session.recorder) {
+    try {
+      const blob = await session.recorder.stop();
+      if (blob.size > 0) offerRecording(blob);
+    } catch (error) {
+      console.warn(error);
+    }
+  }
+}
+
+function offerRecording(blob) {
+  if (recordingUrl) URL.revokeObjectURL(recordingUrl);
+  recordingUrl = URL.createObjectURL(blob);
+  const extension = /mp4/.test(blob.type) ? "m4a" : /ogg/.test(blob.type) ? "ogg" : "webm";
+  const link = $("live-download");
+  link.href = recordingUrl;
+  link.download = `what3chords-live.${extension}`;
+  link.textContent = `Download what you heard (${formatSize(blob.size)})`;
+  link.hidden = false;
+}
+
+// ---------------------------------------------------------------------------
+// Sharing and downloading
+// ---------------------------------------------------------------------------
+
+async function share() {
+  if (!state.route || live) return;
+  if (state.path && !state.pathShared) {
+    // A travelled route says where someone has been; ask first.
+    $("share-title").textContent = "Share this route?";
+    $("share-text").textContent = "The link will draw the route you travelled, including where you started and stopped. Anyone who has the link can see it.";
+    $("share-link").hidden = true;
+    $("share-confirm").hidden = false;
+    $("share-cancel").textContent = "Cancel";
+    $("share-dialog").showModal();
+    return;
+  }
+  flushHash();
+  const url = location.href;
+  if (navigator.share && matchMedia("(pointer: coarse)").matches) {
+    try {
+      await navigator.share({ title: "what3chords songs", text: songTitle(), url });
+    } catch (error) {
+      // Dismissing the share sheet isn't a failure.
+    }
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(url);
+    toast("Link copied. It opens this trip with this sound.");
+  } catch (error) {
+    // No clipboard access (an insecure page, or permission refused): show
+    // the link to copy by hand.
+    $("share-title").textContent = "Copy this link";
+    $("share-text").textContent = "It opens this trip with this sound.";
+    $("share-link").value = url;
+    $("share-link").hidden = false;
+    $("share-confirm").hidden = true;
+    $("share-cancel").textContent = "Done";
+    $("share-dialog").showModal();
+    $("share-link").select();
+  }
+}
+
+async function downloadSong() {
+  if (!state.route || live) return;
+  const button = $("download");
+  if (button.classList.contains("busy")) return;
+  button.classList.add("busy");
+  const title = songTitle();
+  try {
+    const blob = await renderSong(makeSong(), {
+      signature: state.signature,
+      pattern: findPattern(state.signature, state.patternId),
+      bpm: state.bpm,
+      drums: state.drums,
+      drumStyle: state.drumStyle,
+      bass: state.bass,
+      guitar: state.guitar,
+      levels: state.levels,
+    });
+    const name = `${title.toLowerCase().replace(/→/g, "to").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "song"}.wav`;
+    saveBlob(blob, name);
+    toast(`Saved ${name} (${formatSize(blob.size)}).`);
+  } catch (error) {
+    console.warn(error);
+    toast(error.message || "The song couldn’t be rendered in this browser.");
+  } finally {
+    button.classList.remove("busy");
+  }
+}
+
+// The prompt shown when the page was opened from a link to a song: browsers
+// won't start sound without a click, so make the click obvious.
+function showArrival() {
+  if (!state.route) return;
+  const style = currentStyle();
+  $("arrival-what").textContent = `${songTitle()} · ${style ? style.name : "custom sound"} · ${state.bpm} BPM`;
+  $("arrival").hidden = false;
+}
+
+function hideArrival() {
+  $("arrival").hidden = true;
+}
+
+// ---------------------------------------------------------------------------
 // Controls
 // ---------------------------------------------------------------------------
 
@@ -894,25 +1254,91 @@ function radioValue(name) {
   return document.querySelector(`input[name="${name}"]:checked`).value;
 }
 
-function fillPatternSelect() {
-  $("pattern").replaceChildren(...PATTERNS[state.signature].map((pattern) => {
+function fillSelect(select, options, value) {
+  select.replaceChildren(...options.map(([id, name]) => {
     const option = document.createElement("option");
-    option.value = pattern.id;
-    option.textContent = pattern.name;
+    option.value = id;
+    option.textContent = name;
     return option;
   }));
-  $("pattern").value = state.patternId;
+  select.value = value;
 }
 
-function applyRhythm() {
+function fillPatternSelect() {
+  fillSelect($("pattern"), PATTERNS[state.signature].map((pattern) => [pattern.id, pattern.name]), state.patternId);
+}
+
+// The style whose settings match what is selected now, if any. Tempo is
+// left out: nudging the speed doesn't make a waltz something else.
+function currentStyle() {
+  return STYLES.find((style) =>
+    style.signature === state.signature && style.pattern === state.patternId &&
+    style.guitar === state.guitar && style.drums === state.drums && style.bass === state.bass &&
+    (!style.drums || style.drumStyle === state.drumStyle));
+}
+
+function renderStyle() {
+  const style = currentStyle();
+  const options = STYLES.map((s) => [s.id, s.name]);
+  if (!style) options.push(["custom", "Custom"]);
+  fillSelect($("style"), options, style ? style.id : "custom");
+}
+
+// The one-line "what's selected" text on each collapsed section.
+function renderSummaries() {
+  $("route-now").textContent = state.path ? "Recorded route" : `${MODES[state.mode].name} · ${LENGTHS[state.length].name}`;
+  const pattern = findPattern(state.signature, state.patternId);
+  $("rhythm-now").textContent = `${pattern.name} · ${state.perStop === 3 ? "all 3 chords" : "1 chord"} per stop`;
+  const drumStyle = DRUM_STYLES.find((style) => style.id === state.drumStyle);
+  const drums = !state.drums ? "no drums" : state.drumStyle === "match" ? "drums" : `${drumStyle.name.toLowerCase()} drums`;
+  $("band-now").textContent = `${findGuitar(state.guitar).name} · ${drums} · ${state.bass ? "bass" : "no bass"}`;
+}
+
+// Pushes every sound setting to the player and repaints what depends on it.
+function applySound() {
   const pattern = findPattern(state.signature, state.patternId);
   state.patternId = pattern.id;
   player.signature = state.signature;
   player.pattern = pattern;
+  player.drums = state.drums;
+  player.drumStyle = state.drumStyle;
+  player.bass = state.bass;
   player.setTempo(state.bpm);
+  if (band.wanted !== state.guitar) {
+    band.setGuitar(state.guitar).catch(() => toast("That guitar didn’t load. Check your connection and pick it again."));
+  }
+  if (state.bass) band.loadBass().catch(() => toast("The bass didn’t load. Check your connection and switch it on again."));
+  $("drum-style").disabled = !state.drums;
   renderPattern();
+  renderStyle();
+  renderSummaries();
   if (state.playing !== "route") renderSongInfo();
   writeHash();
+}
+
+function syncSoundControls() {
+  $("signature").value = state.signature;
+  fillPatternSelect();
+  $("tempo").value = state.bpm;
+  $("tempo-number").value = state.bpm;
+  $("guitar").value = state.guitar;
+  $("drums").checked = state.drums;
+  $("drum-style").value = state.drumStyle;
+  $("bass").checked = state.bass;
+}
+
+function applyStyle(id) {
+  const style = STYLES.find((s) => s.id === id);
+  if (!style) return;
+  state.signature = style.signature;
+  state.patternId = style.pattern;
+  state.guitar = style.guitar;
+  state.drums = style.drums;
+  state.drumStyle = style.drumStyle;
+  state.bass = style.bass;
+  state.bpm = style.bpm;
+  syncSoundControls();
+  applySound();
 }
 
 function setTempo(value) {
@@ -920,7 +1346,7 @@ function setTempo(value) {
   state.bpm = bpm;
   $("tempo").value = bpm;
   $("tempo-number").value = bpm;
-  applyRhythm();
+  applySound();
 }
 
 function setPerStop(per) {
@@ -928,6 +1354,7 @@ function setPerStop(per) {
   if (per === old) return;
   state.perStop = per;
   $("perstop-explain").textContent = PER_STOP_EXPLAIN[per];
+  renderSummaries();
   writeHash();
   if (!state.route) return;
   if (state.playing === "route") {
@@ -945,6 +1372,16 @@ function setPerStop(per) {
     renderSongInfo();
     renderPlayhead();
   }
+}
+
+function setLevels() {
+  state.levels = {
+    guitar: Number($("level-guitar").value),
+    bass: Number($("level-bass").value),
+    drums: Number($("level-drums").value),
+  };
+  band.setLevels(state.levels);
+  remember("w3c-levels", state.levels);
 }
 
 function setTheme(next) {
@@ -993,7 +1430,7 @@ function bindControls() {
   for (const input of document.querySelectorAll('input[name="mode"]')) {
     input.addEventListener("change", () => {
       state.mode = radioValue("mode");
-      $("mode-explain").textContent = MODE_EXPLAIN[state.mode];
+      $("mode-explain").textContent = MODES[state.mode].explain;
       writeHash();
       rebuildRoute();
     });
@@ -1010,34 +1447,62 @@ function bindControls() {
     input.addEventListener("change", () => setPerStop(Number(radioValue("perstop"))));
   }
 
+  $("style").addEventListener("change", () => applyStyle($("style").value));
   $("signature").addEventListener("change", () => {
     state.signature = $("signature").value;
     state.patternId = PATTERNS[state.signature][0].id;
     fillPatternSelect();
-    applyRhythm();
+    applySound();
   });
   $("pattern").addEventListener("change", () => {
     state.patternId = $("pattern").value;
-    applyRhythm();
+    applySound();
   });
   $("tempo").addEventListener("input", () => setTempo($("tempo").value));
   $("tempo-number").addEventListener("change", () => setTempo($("tempo-number").value));
-  $("volume").addEventListener("input", () => {
-    state.volume = Number($("volume").value);
-    player.setVolume(state.volume);
+  $("guitar").addEventListener("change", () => {
+    state.guitar = $("guitar").value;
+    applySound();
   });
+  $("drums").addEventListener("change", () => {
+    state.drums = $("drums").checked;
+    applySound();
+  });
+  $("drum-style").addEventListener("change", () => {
+    state.drumStyle = $("drum-style").value;
+    applySound();
+  });
+  $("bass").addEventListener("change", () => {
+    state.bass = $("bass").checked;
+    applySound();
+  });
+  for (const id of ["level-guitar", "level-bass", "level-drums"]) $(id).addEventListener("input", setLevels);
+
+  for (const id of SECTIONS) {
+    $(id).addEventListener("toggle", () => remember("w3c-open", SECTIONS.filter((section) => $(section).open)));
+  }
 
   $("example").addEventListener("click", () => {
     setPlace("start", { ...EXAMPLE.start });
     setPlace("end", { ...EXAMPLE.end });
   });
+  $("live-toggle").addEventListener("click", () => (live ? endLive() : startLive()));
   $("chart").addEventListener("keydown", onChartKey);
   // Our own updates use replaceState, which doesn't fire this; a hash that
   // changes any other way is a different link being opened.
   window.addEventListener("hashchange", () => location.reload());
 
   $("play").addEventListener("click", togglePlay);
+  $("arrival-play").addEventListener("click", togglePlay);
   $("stop").addEventListener("click", stopAndRewind);
+  $("share").addEventListener("click", share);
+  $("download").addEventListener("click", downloadSong);
+  $("share-cancel").addEventListener("click", () => $("share-dialog").close());
+  $("share-confirm").addEventListener("click", () => {
+    $("share-dialog").close();
+    state.pathShared = true;
+    share();
+  });
   $("follow").addEventListener("change", () => {
     if (!$("follow").checked || !state.route) return;
     // Close enough that neighbouring stops are about 110 px apart.
@@ -1048,9 +1513,11 @@ function bindControls() {
   });
   $("theme-toggle").addEventListener("click", () => setTheme(theme === "dark" ? "light" : "dark"));
   $("about-open").addEventListener("click", () => $("about").showModal());
-  $("about").addEventListener("click", (event) => {
-    if (event.target === $("about")) $("about").close();
-  });
+  for (const id of ["about", "share-dialog"]) {
+    $(id).addEventListener("click", (event) => {
+      if (event.target === $(id)) $(id).close();
+    });
+  }
 
   document.addEventListener("keydown", (event) => {
     if (event.code !== "Space" || event.repeat || event.metaKey || event.ctrlKey || event.altKey) return;
@@ -1062,26 +1529,28 @@ function bindControls() {
 }
 
 function syncControls() {
-  $("signature").replaceChildren(...SIGNATURES.map((signature) => {
-    const option = document.createElement("option");
-    option.value = signature;
-    option.textContent = signature;
-    return option;
-  }));
-  $("signature").value = state.signature;
-  fillPatternSelect();
-  $("tempo").value = state.bpm;
-  $("tempo-number").value = state.bpm;
-  $("volume").value = state.volume;
+  fillSelect($("signature"), SIGNATURES.map((signature) => [signature, signature]), state.signature);
+  fillSelect($("drum-style"), DRUM_STYLES.map((style) => [style.id, style.name]), state.drumStyle);
+  fillSelect($("guitar"), GUITARS.map((guitar) => [guitar.id, guitar.name]), state.guitar);
+  syncSoundControls();
+  for (const [name, level] of Object.entries(state.levels)) $(`level-${name}`).value = level;
   document.querySelector(`input[name="mode"][value="${state.mode}"]`).checked = true;
   document.querySelector(`input[name="length"][value="${state.length}"]`).checked = true;
   document.querySelector(`input[name="perstop"][value="${state.perStop}"]`).checked = true;
-  $("mode-explain").textContent = MODE_EXPLAIN[state.mode];
+  $("mode-explain").textContent = MODES[state.mode].explain;
   $("length-explain").textContent = LENGTHS[state.length].explain;
   $("perstop-explain").textContent = PER_STOP_EXPLAIN[state.perStop];
   for (const which of ["start", "end"]) {
     places[which].input.value = state[which] ? state[which].label : "";
     places[which].lastQuery = places[which].input.value;
+  }
+  for (const id of recall("w3c-open") || []) {
+    if (SECTIONS.includes(id)) $(id).open = true;
+  }
+  const support = liveSupport();
+  if (support) {
+    $("live-toggle").disabled = true;
+    $("live-pitch").textContent = support;
   }
 }
 
@@ -1092,19 +1561,25 @@ function syncControls() {
 async function main() {
   const missing = ["maplibregl", "h3", "Tone"].filter((name) => !(name in window));
   if (missing.length) throw new Error("Some of the page’s libraries didn’t load. Check your connection and reload.");
-  readHash();
+  const fromLink = decodeHash(location.hash);
+  Object.assign(state, fromLink);
+  // A route that arrived in a link is already out there.
+  state.pathShared = Boolean(fromLink.path);
+  const levels = recall("w3c-levels");
+  if (levels && ["guitar", "bass", "drums"].every((name) => levels[name] >= 0 && levels[name] <= 1)) state.levels = levels;
   syncControls();
   bindControls();
   await loadChords("./data/chords.json");
   initMap();
-  applyRhythm();
-  player.setVolume(state.volume);
+  band.setLevels(state.levels);
+  applySound();
   setMarker("start");
   setMarker("end");
   renderRoute();
-  rebuildRoute({ fit: false }).then(() => fitRoute(false));
-  // Fetch the guitar in the background so the first play is instant.
-  player.load().catch(() => toast("The guitar samples didn’t load, so there’s no sound yet. Reload to try again."));
+  rebuildRoute({ fit: false }).then(() => {
+    fitRoute(false);
+    if (fromLink.path || (fromLink.start && fromLink.end)) showArrival();
+  });
   requestAnimationFrame(frame);
   $("loading").classList.add("done");
 }
