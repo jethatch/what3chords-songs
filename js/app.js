@@ -462,7 +462,12 @@ function pathRoute() {
   const route = buildPathRoute(state.path);
   route.stops.forEach((stop, i) => {
     const entry = state.path[i];
-    if (!entry.chords) entry.chords = chordsFor(entry.point[0], entry.point[1]);
+    // A recorded stop plays its hexagon's chords, taken at the centre, so
+    // they don't depend on the exact point stored or shared.
+    if (!entry.chords) {
+      const centre = h3.cellToLatLng(stop.cell);
+      entry.chords = chordsFor(centre[0], centre[1]);
+    }
     stop.chords = entry.chords;
   });
   return route;
@@ -1074,7 +1079,7 @@ function onLiveFix(fix) {
 
 function onLiveStop(stop) {
   if (!live) return;
-  const entry = { point: stop.point, res: stop.res, chords: chordsFor(stop.point[0], stop.point[1]) };
+  const entry = { point: stop.point, res: stop.res };
   if (live.started) {
     state.path.push(entry);
   } else {
@@ -1184,7 +1189,7 @@ async function share() {
   if (state.path && !state.pathShared) {
     // A travelled route says where someone has been; ask first.
     $("share-title").textContent = "Share this route?";
-    $("share-text").textContent = "The link will draw the route you travelled, including where you started and stopped. Anyone who has the link can see it.";
+    $("share-text").textContent = "The link will draw the route you travelled, hexagon by hexagon, including where you started and stopped. Anyone who has the link can see it.";
     $("share-link").hidden = true;
     $("share-confirm").hidden = false;
     $("share-cancel").textContent = "Cancel";

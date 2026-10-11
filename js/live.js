@@ -2,6 +2,8 @@
 // per hexagon entered. The hexagons are far bigger than the ~1 m cells the
 // chords come from, because a phone's idea of where it is wanders by many
 // metres; the size also grows with speed so a drive isn't a blur of chords.
+// Each stop stands at its hexagon's centre, so a hexagon sounds the same
+// whoever walks into it and from whichever side.
 
 import { haversineKm, hexSpacingKm } from "./routing.js";
 
@@ -48,7 +50,7 @@ export class LiveSession {
     this.onStop = onStop;
     this.onFix = onFix;
     this.onError = onError;
-    this.stops = []; // { point: [lat, lng], res, time }
+    this.stops = []; // { point: hexagon centre [lat, lng], res, time, entry }
     this.res = resolutionForSpeed(0);
     this.speed = 0;
     this.last = null;
@@ -131,6 +133,8 @@ export class LiveSession {
     } else {
       const here = h3.latLngToCell(lat, lng, this.res);
       const there = h3.latLngToCell(current.point[0], current.point[1], this.res);
+      // (After a change of hexagon size, "there" is the new-size hexagon
+      // around the old stop.)
       if (here === there) {
         this.candidate = null;
       } else {
@@ -139,7 +143,7 @@ export class LiveSession {
         // Standing near an edge, the position flickers across it. Count it
         // as a move only once it has stuck and is a real distance away.
         const settled = this.candidate.fixes >= 2 || time - this.candidate.since >= DWELL_MS;
-        const movedKm = haversineKm(current.point, fix.point);
+        const movedKm = haversineKm(current.entry, fix.point);
         if (settled && movedKm > 0.6 * hexSpacingKm(this.res)) this.addStop(fix);
       }
     }
@@ -162,7 +166,10 @@ export class LiveSession {
   }
 
   addStop(fix) {
-    const stop = { point: fix.point, res: this.res, time: fix.time };
+    const cell = h3.latLngToCell(fix.point[0], fix.point[1], this.res);
+    // `entry`, where the device actually was, is only for judging the next
+    // move; it is never part of the route.
+    const stop = { point: h3.cellToLatLng(cell), res: this.res, time: fix.time, entry: fix.point };
     this.stops.push(stop);
     this.candidate = null;
     this.onStop(stop);

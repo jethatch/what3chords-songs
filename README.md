@@ -53,7 +53,7 @@ Unchanged from the original, so a spot has the same chords here as there:
 2. Take its base cell and 15 base-7 digits, shuffle the digits with a fixed permutation, and read the result as one number.
 3. Write that number in base 167,011, the number of voicings in the chord code book. The three digits index three chords.
 
-For a route stop, the point used is the pin itself (first and last stop), the hexagon's centre (hex walk), the middle of the road's passage through the hexagon (roads), or, in a live session, the exact spot where you crossed into the hexagon.
+For a route stop, the point used is the pin itself (first and last stop of a planned trip), the hexagon's centre (hex walk, live sessions and recorded routes), or the middle of the road's passage through the hexagon (roads). Because live sessions use centres, a hexagon plays the same chords whoever enters it and from whichever side, and a shared live route reveals which hexagons were visited rather than exact positions.
 
 ## Differences from the original
 
