@@ -11,7 +11,7 @@ Every square metre of Earth is three guitar chords. Pick two places and play the
 - **A song.** Press play and a marker travels the route while a strummed guitar plays each stop's chords. Choose the time signature (4/4, 3/4, 6/8, 2/4, 5/4, 7/8), tempo, strum pattern, and whether each stop plays all three of its chords or just one. Changes take effect at the next bar line.
 - **A band.** A Style menu sets up a whole sound in one go (punk trio, campfire acoustic, reggae, waltz and so on). Underneath it you can pick the guitar (electric clean, crunch, fuzz, chorus or 12-string; steel-string, 12-string or nylon acoustic), switch on drums and bass that follow the strum pattern, choose a different drum style, and balance the three.
 - **Sharing.** The page address carries the trip and every sound setting, and the share button copies it. Opening a shared link shows a "Play this song" prompt, because browsers won't start audio without a click. The download button renders the song to a WAV file.
-- **Live sessions.** "Go live" follows the device's location: the hexagon you are in loops its three chords, and the chords change as you move into the next. Hexagons are about 50 m across on foot and grow with speed. Ending the session leaves the route as a trip you can replay or share, and offers what you heard as a download. The page has to stay open with the screen on; a web page cannot play from a locked phone. Location never leaves the browser unless you choose to share the route as a link.
+- **Live sessions.** "Go live" follows the device's location: the hexagon you are in loops its three chords, and the chords change as you move into the next. Hexagons are about 50 m across on foot and grow with speed. Ending the session leaves the route as a trip you can replay or share, and offers what you heard as a download. The page keeps the screen awake while a session runs, because a web page cannot play from a locked phone. The route and recording last only until the page is closed. The page itself sends your location nowhere; the map does load tiles for wherever you are from CARTO, and a link to the route is made only if you choose to share it.
 
 Most of the options are folded away. The page opens with start, end, style, time signature and tempo; route, rhythm and band details expand when wanted.
 
@@ -53,7 +53,7 @@ Unchanged from the original, so a spot has the same chords here as there:
 2. Take its base cell and 15 base-7 digits, shuffle the digits with a fixed permutation, and read the result as one number.
 3. Write that number in base 167,011, the number of voicings in the chord code book. The three digits index three chords.
 
-For a route stop, the point used is the pin itself (first and last stop), the hexagon's centre (hex walk) or the middle of the road's passage through the hexagon (roads).
+For a route stop, the point used is the pin itself (first and last stop), the hexagon's centre (hex walk), the middle of the road's passage through the hexagon (roads), or, in a live session, the exact spot where you crossed into the hexagon.
 
 ## Differences from the original
 

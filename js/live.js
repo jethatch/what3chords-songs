@@ -6,20 +6,33 @@
 import { haversineKm, hexSpacingKm } from "./routing.js";
 
 const MAX_USABLE_ACCURACY_M = 150;
+const MAX_FIRST_FIX_ACCURACY_M = 100;
+const SPEED_STEPS = [[2.5, 11], [7, 10], [14, 9]];
 const RES_SETTLE_MS = 8000;
 const DWELL_MS = 3000;
 
 // H3 resolution for a speed in metres per second: about 50 m hexagons on
 // foot, 130 m on a bike, 350 m in town traffic, 900 m on the open road.
 export function resolutionForSpeed(mps) {
-  if (mps < 2.5) return 11;
-  if (mps < 7) return 10;
-  if (mps < 14) return 9;
+  for (const [limit, res] of SPEED_STEPS) if (mps < limit) return res;
   return 8;
+}
+
+// The same, but reluctant to leave the current size when the speed is only
+// just over the line, so a steady jog at the boundary doesn't flip-flop.
+function steadyResolution(mps, current) {
+  const wanted = resolutionForSpeed(mps);
+  if (Math.abs(wanted - current) !== 1) return wanted;
+  const [limit] = SPEED_STEPS.find(([, res]) => res === Math.max(wanted, current));
+  return Math.abs(mps - limit) < limit * 0.15 ? current : wanted;
 }
 
 export function paceName(res) {
   return { 11: "walking pace", 10: "cycling pace", 9: "driving in town", 8: "driving" }[res] || "moving";
+}
+
+function formatAccuracy(metres) {
+  return metres >= 1000 ? `${(metres / 1000).toFixed(1)} km` : `${Math.round(metres)} m`;
 }
 
 export function liveSupport() {
@@ -77,7 +90,10 @@ export class LiveSession {
   async keepAwake() {
     if (!("wakeLock" in navigator) || this.watch === null) return;
     try {
-      this.wakeLock = await navigator.wakeLock.request("screen");
+      const lock = await navigator.wakeLock.request("screen");
+      // The session may have ended while the request was pending.
+      if (this.watch === null) lock.release().catch(() => {});
+      else this.wakeLock = lock;
     } catch (error) {
       // Refused (low battery, say): the session still works with the screen on.
     }
@@ -87,14 +103,22 @@ export class LiveSession {
     const { latitude: lat, longitude: lng, accuracy } = position.coords;
     const time = position.timestamp || Date.now();
     const fix = { point: [lat, lng], accuracy, time };
-    // A wild guess is worse than no update, except to get started.
-    if (accuracy > MAX_USABLE_ACCURACY_M && this.stops.length) return;
+    // A wild guess is worse than no update, and worst of all as the place
+    // the whole trip starts from.
+    if (accuracy > (this.stops.length ? MAX_USABLE_ACCURACY_M : MAX_FIRST_FIX_ACCURACY_M)) {
+      if (!this.stops.length) this.onError(`Waiting for a better fix. Right now it’s only good to ${formatAccuracy(accuracy)}.`, false);
+      return;
+    }
 
     if (this.last) {
       const seconds = (time - this.last.time) / 1000;
+      // Many devices report no speed at all (null), so fall back to how far
+      // the position moved.
       let speed = position.coords.speed;
-      if (!(speed >= 0) && seconds > 0.5) speed = (haversineKm(this.last.point, fix.point) * 1000) / seconds;
-      if (speed >= 0) this.speed = this.speed * 0.7 + speed * 0.3;
+      if (!(typeof speed === "number" && speed >= 0)) {
+        speed = seconds > 0.5 ? (haversineKm(this.last.point, fix.point) * 1000) / seconds : null;
+      }
+      if (speed !== null) this.speed = this.speed * 0.7 + speed * 0.3;
     }
     this.last = fix;
     this.settleResolution(time);
@@ -125,7 +149,7 @@ export class LiveSession {
   // Change hexagon size only once the new pace has lasted a while, so a
   // red light or a sprint for the bus doesn't.
   settleResolution(time) {
-    const wanted = resolutionForSpeed(this.speed);
+    const wanted = steadyResolution(this.speed, this.res);
     if (wanted === this.res) {
       this.pendingRes = null;
     } else if (!this.pendingRes || this.pendingRes.res !== wanted) {

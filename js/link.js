@@ -60,12 +60,17 @@ export function decodePath(points, sizes) {
     }
   }
   if (shift !== 0 || numbers.length < 2 || numbers.length % 2) return null;
+  const count = numbers.length / 2;
+  if (count > MAX_PATH_STOPS + 1) return null;
+  // The sizes must account for exactly as many stops as there are points;
+  // anything else is a damaged or hostile link, and not worth expanding.
   const resolutions = [];
   for (const run of (sizes || "").split(".")) {
     const match = run.match(/^([0-9a-f])(\d{1,4})$/);
-    if (!match) return null;
+    if (!match || resolutions.length + Number(match[2]) > count) return null;
     for (let i = 0; i < Number(match[2]); i++) resolutions.push(parseInt(match[1], 16));
   }
+  if (resolutions.length !== count) return null;
   const entries = [];
   let lat = 0;
   let lng = 0;
@@ -74,10 +79,10 @@ export function decodePath(points, sizes) {
     lng += numbers[i + 1];
     const point = [lat / 1e5, lng / 1e5];
     const res = resolutions[i / 2];
-    if (Math.abs(point[0]) > 90 || Math.abs(point[1]) > 180 || res === undefined) return null;
+    if (Math.abs(point[0]) > 90 || Math.abs(point[1]) > 180) return null;
     entries.push({ point, res });
   }
-  return entries.length <= MAX_PATH_STOPS + 1 ? entries : null;
+  return entries;
 }
 
 // ---------------------------------------------------------------------------
@@ -139,9 +144,9 @@ export function decodeHash(hash) {
   if (params.get("c") === "1") found.perStop = 1;
   if (GUITARS.some((guitar) => guitar.id === params.get("g"))) found.guitar = params.get("g");
   const drums = params.get("d");
-  if (drums) {
+  if (drums === "1" || DRUM_STYLES.some((style) => style.id === drums)) {
     found.drums = true;
-    found.drumStyle = DRUM_STYLES.some((style) => style.id === drums) ? drums : "match";
+    found.drumStyle = drums === "1" ? "match" : drums;
   }
   if (params.get("bs") === "1") found.bass = true;
   return found;

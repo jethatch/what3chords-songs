@@ -15,6 +15,9 @@ const ENDING_SECONDS = 2.6;
 const LOWEST_BASS_NOTE = 28; // E1, the open low string of a bass
 const DRUM_LEVELS = { X: 1, x: 0.75, ".": 0.3 };
 export const MAX_RENDER_SECONDS = 600;
+const RENDER_RATE = 44100;
+const CHUNK_SECONDS = 16;
+const CHUNK_TAIL_SECONDS = 3;
 
 export function songSeconds(bars, signature, bpm) {
   return (bars * slotsPerBar(signature) * 15) / bpm + ENDING_SECONDS;
@@ -46,6 +49,7 @@ export class Player {
     this.drumStyle = "match";
     this.bass = false;
     this.song = null;
+    this.untilBar = Infinity;
     this.marks = [];
     this.onEnd = () => {};
   }
@@ -128,6 +132,8 @@ export class Player {
       return;
     }
     if (this.slot === 0) {
+      // A chunk of an offline render plays up to its last bar and no further.
+      if (this.bar >= this.untilBar) return;
       this.band.releaseGuitar(time);
       if (this.atBarLine) {
         this.bar = this.atBarLine(this.bar);
@@ -258,61 +264,110 @@ export class Player {
 // Getting a song out as a file
 // ---------------------------------------------------------------------------
 
-function encodeWav(audioBuffer) {
-  const length = audioBuffer.length;
-  const channels = audioBuffer.numberOfChannels;
-  const view = new DataView(new ArrayBuffer(44 + length * 2));
+// 16-bit mono WAV from samples in the range -1..1.
+function encodeWav(samples, sampleRate) {
+  const view = new DataView(new ArrayBuffer(44 + samples.length * 2));
   const text = (offset, string) => [...string].forEach((ch, i) => view.setUint8(offset + i, ch.charCodeAt(0)));
   text(0, "RIFF");
-  view.setUint32(4, 36 + length * 2, true);
+  view.setUint32(4, 36 + samples.length * 2, true);
   text(8, "WAVEfmt ");
   view.setUint32(16, 16, true);
   view.setUint16(20, 1, true); // PCM
   view.setUint16(22, 1, true); // mono
-  view.setUint32(24, audioBuffer.sampleRate, true);
-  view.setUint32(28, audioBuffer.sampleRate * 2, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
   view.setUint16(32, 2, true);
   view.setUint16(34, 16, true);
   text(36, "data");
-  view.setUint32(40, length * 2, true);
-  const data = [];
-  for (let channel = 0; channel < channels; channel++) data.push(audioBuffer.getChannelData(channel));
-  for (let i = 0; i < length; i++) {
-    let sample = 0;
-    for (let channel = 0; channel < channels; channel++) sample += data[channel][i];
-    sample = Math.max(-1, Math.min(1, sample / channels));
-    view.setInt16(44 + i * 2, sample * 32767, true);
-  }
+  view.setUint32(40, samples.length * 2, true);
+  // The limiter lets the odd transient through; bring the whole file down
+  // rather than clip it.
+  let peak = 0;
+  for (let i = 0; i < samples.length; i++) peak = Math.max(peak, Math.abs(samples[i]));
+  const scale = peak > 0.97 ? 0.97 / peak : 1;
+  for (let i = 0; i < samples.length; i++) view.setInt16(44 + i * 2, samples[i] * scale * 32767, true);
   return new Blob([view], { type: "audio/wav" });
 }
 
-// Renders a whole song faster than real time and resolves to a WAV Blob.
-// settings: { signature, pattern, bpm, drums, drumStyle, bass, guitar, levels }
-export async function renderSong(song, settings) {
-  const seconds = songSeconds(song.bars, settings.signature, settings.bpm) + 0.3;
-  if (!(seconds <= MAX_RENDER_SECONDS)) {
-    throw new Error(`Songs over ${MAX_RENDER_SECONDS / 60} minutes are too long to download. Pick a shorter song length or a faster tempo.`);
-  }
-  // Fetch before the offline context takes over, so building the band
-  // inside it doesn't have to wait on the network.
-  await loadSamples(findGuitar(settings.guitar).samples);
-  if (settings.bass) await loadSamples("bass");
-  const rendered = await Tone.Offline(async ({ transport }) => {
+// Hands control back to the page for a moment. A message channel rather
+// than a timer, because browsers slow timers to one a second in a tab that
+// isn't in front, and a render shouldn't crawl because of that.
+function breathe() {
+  return new Promise((resolve) => {
+    const channel = new MessageChannel();
+    channel.port1.onmessage = () => resolve();
+    channel.port2.postMessage(0);
+  });
+}
+
+// Renders bars [fromBar, untilBar) of a song, plus `tail` seconds for the
+// last notes and the reverb to die away, in an offline context of its own.
+async function renderChunk(song, settings, fromBar, untilBar, seconds) {
+  const live = Tone.getContext();
+  const context = new Tone.OfflineContext(2, seconds, RENDER_RATE);
+  Tone.setContext(context);
+  let rendering;
+  try {
     const band = new Band();
     band.setLevels(settings.levels);
     await band.setGuitar(settings.guitar);
     if (settings.bass) await band.loadBass();
-    const player = new Player(band, transport, true);
+    const player = new Player(band, context.transport, true);
     player.signature = settings.signature;
     player.pattern = settings.pattern;
     player.bpm = settings.bpm;
     player.drums = settings.drums;
     player.drumStyle = settings.drumStyle;
     player.bass = settings.bass;
-    player.begin(song);
-    transport.start(0);
-  }, seconds, 2, 44100);
-  return encodeWav(rendered.get());
+    player.begin(song, fromBar);
+    player.untilBar = untilBar;
+    context.transport.start(0);
+    // Stepping the clock in one go, rather than with the library's pauses,
+    // keeps this quick in a tab that isn't in front.
+    rendering = context.render(false);
+  } finally {
+    Tone.setContext(live);
+  }
+  return (await rendering).get();
+}
+
+// Renders a whole song faster than real time and resolves to a WAV Blob.
+// settings: { signature, pattern, bpm, drums, drumStyle, bass, guitar, levels }
+// onProgress(fraction) is called as it goes.
+//
+// The song is rendered a few bars at a time and the pieces overlapped: one
+// long offline context has to carry every note of the song at once, and
+// slows down with the square of its length.
+export async function renderSong(song, settings, onProgress = () => {}) {
+  const barSeconds = (slotsPerBar(settings.signature) * 15) / settings.bpm;
+  const seconds = songSeconds(song.bars, settings.signature, settings.bpm) + 0.3;
+  if (!(seconds <= MAX_RENDER_SECONDS)) {
+    throw new Error(`Songs over ${MAX_RENDER_SECONDS / 60} minutes are too long to download. Try a faster tempo, one chord per stop, or a shorter trip.`);
+  }
+  await loadSamples(findGuitar(settings.guitar).samples);
+  if (settings.bass) await loadSamples("bass");
+
+  const mix = new Float32Array(Math.ceil(seconds * RENDER_RATE));
+  const chunkBars = Math.max(1, Math.floor(CHUNK_SECONDS / barSeconds));
+  for (let fromBar = 0; fromBar < song.bars; fromBar += chunkBars) {
+    const last = fromBar + chunkBars >= song.bars;
+    const untilBar = last ? Infinity : fromBar + chunkBars;
+    const bars = Math.min(chunkBars, song.bars - fromBar);
+    const length = bars * barSeconds + (last ? ENDING_SECONDS + 0.3 : CHUNK_TAIL_SECONDS);
+    const chunk = await renderChunk(song, settings, fromBar, untilBar, length);
+    const offset = Math.round(fromBar * barSeconds * RENDER_RATE);
+    const channels = [];
+    for (let c = 0; c < chunk.numberOfChannels; c++) channels.push(chunk.getChannelData(c));
+    const count = Math.min(chunk.length, mix.length - offset);
+    for (let i = 0; i < count; i++) {
+      let sample = 0;
+      for (const channel of channels) sample += channel[i];
+      mix[offset + i] += sample / channels.length;
+    }
+    onProgress(Math.min(1, (fromBar + bars) / song.bars));
+    await breathe();
+  }
+  return encodeWav(mix, RENDER_RATE);
 }
 
 // Records what the band plays, as it plays. The browser picks the format
@@ -323,6 +378,7 @@ export class LiveRecorder {
   }
 
   constructor(band) {
+    this.band = band;
     this.recorder = new Tone.Recorder();
     band.limiter.connect(this.recorder);
   }
@@ -334,6 +390,7 @@ export class LiveRecorder {
   // Resolves to a Blob.
   async stop() {
     const blob = await this.recorder.stop();
+    this.band.limiter.disconnect(this.recorder);
     this.recorder.dispose();
     return blob;
   }

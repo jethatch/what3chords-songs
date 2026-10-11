@@ -156,16 +156,20 @@ export class Band {
   // until then.
   setGuitar(id) {
     this.guitarReady = this.swapGuitar(id).catch((error) => {
-      // Forget the request so that asking again tries again.
-      this.wanted = null;
+      // Forget the request so that asking again tries again (unless a
+      // different guitar has been asked for since).
+      if (this.wanted === id) this.wanted = null;
       throw error;
     });
     return this.guitarReady;
   }
 
-  // Resolves when everything that has been asked for can make a sound.
-  ready() {
-    return Promise.all([this.guitarReady, this.bassLoading].filter(Boolean));
+  // Resolves once everything asked for has either loaded or failed. A band
+  // missing its bass, or still on its previous guitar, can still play; one
+  // with no guitar at all cannot.
+  async ready() {
+    await Promise.allSettled([this.guitarReady, this.bassLoading].filter(Boolean));
+    if (!this.guitar) throw new Error("The guitar hasn’t loaded. Check your connection and press play again.");
   }
 
   async swapGuitar(id) {

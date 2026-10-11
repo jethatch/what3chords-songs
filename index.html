@@ -87,6 +87,8 @@
           <details class="more" id="more-route">
             <summary><span class="more-title">Route options</span><span class="more-now" id="route-now"></span></summary>
             <div class="more-body">
+              <p class="hint" id="route-note" hidden>This is a recorded route, so it keeps the stops it was travelled with. Enter a start and an end to plan a trip instead.</p>
+              <fieldset class="plain" id="route-choices">
               <fieldset class="choice">
                 <legend>Route</legend>
                 <div class="segmented">
@@ -105,6 +107,7 @@
                 </div>
                 <p class="explain" id="length-explain" aria-live="polite"></p>
               </fieldset>
+              </fieldset>
             </div>
           </details>
         </fieldset>
@@ -119,7 +122,7 @@
             <p class="live-pitch" id="live-pitch">Or play where you are: the song follows you as you move.</p>
           </div>
           <p class="live-status" id="live-status" role="status"></p>
-          <p class="live-note" id="live-note" hidden>Keep this page open and the screen on; the music stops if the phone locks. Your location stays on this device.</p>
+          <p class="live-note" id="live-note" hidden>The screen is kept awake while this runs; if the phone locks anyway, the music stops. This page doesn’t send your location anywhere, though the map loads the tiles for wherever you are.</p>
           <a class="button quiet live-download" id="live-download" hidden></a>
         </div>
       </section>
@@ -200,10 +203,13 @@
       <div id="map" aria-label="Map. Click anywhere to hear that spot’s three chords."></div>
       <div id="toast" role="alert" hidden></div>
       <div id="arrival" hidden>
-        <button type="button" class="arrival-play" id="arrival-play">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"/></svg>
-          <span><strong>Play this song</strong><span id="arrival-what"></span></span>
-        </button>
+        <div class="arrival-box">
+          <button type="button" class="arrival-play" id="arrival-play">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"/></svg>
+            <span><strong>Play this song</strong><span id="arrival-what"></span></span>
+          </button>
+          <button type="button" class="arrival-close" id="arrival-close" aria-label="Dismiss">×</button>
+        </div>
       </div>
     </main>
 
@@ -269,8 +275,9 @@
     <p>The share button copies a link that opens this trip with this sound. The download button saves the song as a WAV file.</p>
     <p class="fine">On an iPhone, flip the ring/silent switch to ring if you hear nothing.</p>
     <h3>Going live</h3>
-    <p><strong>Go live</strong> follows your location instead of a planned route. The hexagon you are standing in plays its three chords round and round, and the chords change when you move into the next one. Hexagons are about 50 m across on foot and larger when you travel faster, because a phone’s sense of where it is wanders by several metres.</p>
-    <p>Keep the page open with the screen on: a web page cannot keep playing once the phone locks. When you end the session the route becomes an ordinary trip you can replay, and what you heard can be downloaded. Your location is not sent anywhere; a link to the route is only made if you press share and agree.</p>
+    <p><strong>Go live</strong> follows your location instead of a planned route. Each time you cross into a new hexagon, the three chords of the exact spot where you entered it play round and round until you reach the next. Hexagons are about 50 m across on foot and larger when you travel faster, because a phone’s sense of where it is wanders by several metres.</p>
+    <p>The page keeps the screen awake while a session runs, because a web page cannot keep playing once the phone locks. When you end the session the route becomes an ordinary trip you can replay, and a recording of what you heard can be downloaded. Neither is kept once you close the page.</p>
+    <p>This page does not send your location anywhere. Two things to know: the map loads its tiles for wherever you are from CARTO, as any online map does, and a link to the route is only made if you press share and agree.</p>
     <h3>Credits</h3>
     <p class="fine">This page is a recreation based on the original <a href="https://github.com/DOSull/what3chords" target="_blank" rel="noopener">what3chords</a> by David O’Sullivan, Luke Bergmann, Jim Thatcher and Nick Lally. The idea, the place-to-chords scheme, the chord code book and the guitar samples come from that project. Licensing is under discussion with the original authors; until it is settled, please ask before reusing any of it.</p>
     <p class="fine">Place search by <a href="https://nominatim.org/" target="_blank" rel="noopener">Nominatim</a> and <a href="https://photon.komoot.io/" target="_blank" rel="noopener">Photon</a>, map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors, basemap © <a href="https://carto.com/attributions" target="_blank" rel="noopener">CARTO</a>. Built with MapLibre GL JS, h3-js and Tone.js.</p>

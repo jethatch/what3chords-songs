@@ -228,6 +228,7 @@ function initMap() {
 
   map.on("style.load", addRouteLayers);
   map.on("click", (event) => {
+    hideArrival();
     // A live session owns the sound and the route; nothing to pin.
     if (!live) openSpot(event.lngLat.lat, wrapLng(event.lngLat.lng), true);
   });
@@ -366,6 +367,7 @@ function setPlace(which, place, { move = true } = {}) {
   const ui = places[which];
   if (ui.abort) ui.abort.abort();
   // Choosing a place starts a planned trip; a recorded one makes way.
+  if (state.path) setLiveStatus("");
   state.path = null;
   state.pathShared = false;
   state[which] = place;
@@ -514,10 +516,17 @@ async function rebuildRoute({ fit = true } = {}) {
 function renderRoute() {
   const route = state.route;
   const summary = $("route-summary");
-  $("play").disabled = !route && !live;
+  // During a live session there is nothing to play until a position arrives.
+  $("play").disabled = live ? !live.started : !route;
+  $("play").title = live && !live.started ? "Waiting for your location" : "";
   $("stop").disabled = !route && !live;
-  $("share").disabled = !route || Boolean(live);
-  $("download").disabled = !route || Boolean(live);
+  for (const id of ["share", "download"]) {
+    $(id).disabled = !route || Boolean(live);
+    $(id).title = live ? "Available when the live session ends" : $(id).getAttribute("aria-label");
+  }
+  // A recorded route keeps the stops it was travelled with.
+  $("route-choices").disabled = Boolean(state.path);
+  $("route-note").hidden = !state.path;
   summary.classList.toggle("busy", state.routePending);
   renderSummaries();
   if (!route) {
@@ -652,9 +661,11 @@ function setPlayButton() {
 async function startAudio(run) {
   const button = $("play");
   button.classList.add("busy");
-  // A download that failed earlier gets another go each time play is pressed.
-  if (band.wanted !== state.guitar) band.setGuitar(state.guitar).catch(() => {});
-  if (state.bass) band.loadBass().catch(() => {});
+  // A guitar that failed to download gets another go each time play is pressed.
+  if (!band.guitar && band.wanted !== state.guitar) {
+    asked.guitar = state.guitar;
+    band.setGuitar(state.guitar).catch(() => { asked.guitar = null; });
+  }
   try {
     await run();
     return true;
@@ -1029,6 +1040,8 @@ function startLive() {
   };
   setLiveStatus("Finding you…");
   $("live-download").hidden = true;
+  if (recordingUrl) URL.revokeObjectURL(recordingUrl);
+  recordingUrl = null;
   renderLiveControls();
   renderRoute();
   live.session.start();
@@ -1138,7 +1151,7 @@ async function endLive() {
     return;
   }
   const stops = state.path.length;
-  setLiveStatus(`Saved as a trip of ${stops} ${stops === 1 ? "stop" : "stops"}. Play it again, change the band, or share it.`);
+  setLiveStatus(`Recorded ${stops} ${stops === 1 ? "stop" : "stops"}. Replay it, change the band, or share it. It isn’t kept if you close this page.`);
   renderRoute();
   fitRoute();
   if (session.recorder) {
@@ -1158,7 +1171,7 @@ function offerRecording(blob) {
   const link = $("live-download");
   link.href = recordingUrl;
   link.download = `what3chords-live.${extension}`;
-  link.textContent = `Download what you heard (${formatSize(blob.size)})`;
+  link.textContent = `Download the live recording (${formatSize(blob.size)})`;
   link.hidden = false;
 }
 
@@ -1211,6 +1224,8 @@ async function downloadSong() {
   if (button.classList.contains("busy")) return;
   button.classList.add("busy");
   const title = songTitle();
+  const progress = (fraction) => toast(`Rendering the song… ${Math.round(fraction * 100)}%`);
+  progress(0);
   try {
     const blob = await renderSong(makeSong(), {
       signature: state.signature,
@@ -1221,7 +1236,7 @@ async function downloadSong() {
       bass: state.bass,
       guitar: state.guitar,
       levels: state.levels,
-    });
+    }, progress);
     const name = `${title.toLowerCase().replace(/→/g, "to").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "song"}.wav`;
     saveBlob(blob, name);
     toast(`Saved ${name} (${formatSize(blob.size)}).`);
@@ -1288,7 +1303,7 @@ function renderStyle() {
 function renderSummaries() {
   $("route-now").textContent = state.path ? "Recorded route" : `${MODES[state.mode].name} · ${LENGTHS[state.length].name}`;
   const pattern = findPattern(state.signature, state.patternId);
-  $("rhythm-now").textContent = `${pattern.name} · ${state.perStop === 3 ? "all 3 chords" : "1 chord"} per stop`;
+  $("rhythm-now").textContent = `${pattern.name} · ${state.perStop === 3 ? "3 chords" : "1 chord"} a stop`;
   const drumStyle = DRUM_STYLES.find((style) => style.id === state.drumStyle);
   const drums = !state.drums ? "no drums" : state.drumStyle === "match" ? "drums" : `${drumStyle.name.toLowerCase()} drums`;
   $("band-now").textContent = `${findGuitar(state.guitar).name} · ${drums} · ${state.bass ? "bass" : "no bass"}`;
@@ -1304,16 +1319,54 @@ function applySound() {
   player.drumStyle = state.drumStyle;
   player.bass = state.bass;
   player.setTempo(state.bpm);
-  if (band.wanted !== state.guitar) {
-    band.setGuitar(state.guitar).catch(() => toast("That guitar didn’t load. Check your connection and pick it again."));
+  // Ask for instruments only when the choice changes: this runs on every
+  // nudge of the tempo slider, and a failed download shouldn't be hammered.
+  if (asked.guitar !== state.guitar) {
+    const id = state.guitar;
+    asked.guitar = id;
+    band.setGuitar(id).catch(() => guitarFailed(id));
   }
-  if (state.bass) band.loadBass().catch(() => toast("The bass didn’t load. Check your connection and switch it on again."));
+  if (asked.bass !== state.bass) {
+    asked.bass = state.bass;
+    if (state.bass) band.loadBass().catch(bassFailed);
+  }
   $("drum-style").disabled = !state.drums;
   renderPattern();
   renderStyle();
   renderSummaries();
   if (state.playing !== "route") renderSongInfo();
   writeHash();
+}
+
+// What the band was last asked to load.
+const asked = { guitar: null, bass: false };
+
+// A guitar that won't download leaves the previous one in place; say so,
+// and put the menu back so it shows what is actually playing.
+function guitarFailed(id) {
+  // Another guitar has been picked since; its own result is what matters.
+  if (state.guitar !== id) return;
+  const wanted = findGuitar(id).name;
+  asked.guitar = null;
+  if (band.guitar && band.guitar.def.id !== state.guitar) {
+    state.guitar = band.guitar.def.id;
+    asked.guitar = state.guitar;
+    band.wanted = state.guitar;
+    syncSoundControls();
+    applySound();
+    toast(`${wanted} didn’t load, so it’s still ${band.guitar.def.name}. Check your connection and pick it again.`);
+  } else {
+    toast("The guitar didn’t load. Check your connection and press play to try again.");
+  }
+}
+
+function bassFailed() {
+  asked.bass = false;
+  if (!state.bass) return;
+  state.bass = false;
+  syncSoundControls();
+  applySound();
+  toast("The bass didn’t load, so it’s switched off. Check your connection and switch it on again.");
 }
 
 function syncSoundControls() {
@@ -1494,6 +1547,7 @@ function bindControls() {
 
   $("play").addEventListener("click", togglePlay);
   $("arrival-play").addEventListener("click", togglePlay);
+  $("arrival-close").addEventListener("click", hideArrival);
   $("stop").addEventListener("click", stopAndRewind);
   $("share").addEventListener("click", share);
   $("download").addEventListener("click", downloadSong);
@@ -1518,6 +1572,23 @@ function bindControls() {
       if (event.target === $(id)) $(id).close();
     });
   }
+
+  // Phones suspend audio when the screen locks or a call comes in. Try to
+  // pick it up again on return; if the browser wants a tap first, say so.
+  document.addEventListener("visibilitychange", async () => {
+    if (document.visibilityState !== "visible" || player.state !== "playing") return;
+    if (Tone.getContext().state === "running") return;
+    try {
+      await Tone.start();
+    } catch (error) {
+      // Falls through to the check below.
+    }
+    if (Tone.getContext().state !== "running") {
+      player.pause();
+      setPlayButton();
+      toast("The sound was paused while you were away. Press play to carry on.");
+    }
+  });
 
   document.addEventListener("keydown", (event) => {
     if (event.code !== "Space" || event.repeat || event.metaKey || event.ctrlKey || event.altKey) return;
