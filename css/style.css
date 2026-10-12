@@ -80,7 +80,11 @@ h1, h2, h3, p { margin: 0; }
 #panel {
   grid-column: 1;
   grid-row: 1;
+  /* Positioned, so the hidden inputs inside it (see .segmented, .switch)
+     scroll with it and can't make the page itself scrollable. */
+  position: relative;
   overflow-y: auto;
+  overscroll-behavior: contain;
   background: var(--panel);
   border-right: 1px solid var(--line);
   padding: 18px 16px 20px;
@@ -365,7 +369,7 @@ input::placeholder { color: var(--muted); opacity: 0.7; }
   padding: 2px;
   gap: 2px;
 }
-.segmented label { flex: 1; cursor: pointer; }
+.segmented label { flex: 1; position: relative; cursor: pointer; }
 .segmented input {
   position: absolute;
   opacity: 0;
@@ -578,6 +582,7 @@ input[type="range"] {
   min-height: 36px;
 }
 .switch {
+  position: relative;
   flex: none;
   display: inline-flex;
   align-items: center;
