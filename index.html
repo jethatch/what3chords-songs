@@ -87,12 +87,21 @@
           <details class="more" id="more-route">
             <summary><span class="more-title">Route options</span><span class="more-now" id="route-now"></span></summary>
             <div class="more-body">
-              <p class="hint" id="route-note" hidden>This is a recorded route, so it keeps the stops it was travelled with. Enter a start and an end to plan a trip instead.</p>
+              <p class="hint" id="route-note" hidden>This is a recorded route, so it keeps the grid and the stops it was travelled with. Enter a start and an end to plan a trip instead.</p>
               <fieldset class="plain" id="route-choices">
+              <fieldset class="choice">
+                <legend>Grid</legend>
+                <div class="segmented">
+                  <label><input type="radio" name="grid" value="h3" checked><span>Hexagons (H3)</span></label>
+                  <label><input type="radio" name="grid" value="a5"><span>Pentagons (A5)</span></label>
+                </div>
+                <p class="explain" id="grid-explain" aria-live="polite"></p>
+              </fieldset>
+
               <fieldset class="choice">
                 <legend>Route</legend>
                 <div class="segmented">
-                  <label><input type="radio" name="mode" value="hex" checked><span>Hex walk</span></label>
+                  <label><input type="radio" name="mode" value="hex" checked><span id="walk-label">Hex walk</span></label>
                   <label><input type="radio" name="mode" value="road"><span>Follow roads</span></label>
                 </div>
                 <p class="explain" id="mode-explain" aria-live="polite"></p>
@@ -278,29 +287,52 @@
     <h3>Three chords for every place</h3>
     <p>The planet is divided into about 570 trillion hexagons, each under a square metre, using the <a href="https://h3geo.org/" target="_blank" rel="noopener">H3</a> grid. Each hexagon’s ID is shuffled and rewritten as a three-digit number in base 167,011 — the number of guitar chord voicings in the code book. Three digits, three chords. Click anywhere on the map to hear a spot.</p>
     <p>The shuffle has a side effect worth listening for: a place shares its first chord with the region around it, like an accent, while its third chord changes from one doorstep to the next.</p>
+    <p>Under <strong>Route options</strong> you can switch to a second grid, <a href="https://a5geo.org/" target="_blank" rel="noopener">A5</a>, which divides the planet into about a thousand trillion pentagons of half a square metre each. It runs the same recipe over a different grid, so every place gets three different chords. Neither set is the right one, which is rather the point.</p>
     <h3>A trip is a song</h3>
-    <p>Enter a start and an end. The route between them is a chain of hexagons, sized so the trip has a sensible number of stops, and each stop plays the chords of the place it stands on.</p>
+    <p>Enter a start and an end. The route between them is a chain of grid cells (hexagons or pentagons), sized so the trip has a sensible number of stops, and each stop plays the chords of the place it stands on.</p>
     <ul>
-      <li><strong>Hex walk</strong> is greedy local routing: at every hexagon, step to the neighbour nearest the destination. It runs entirely in your browser and cheerfully crosses oceans.</li>
-      <li><strong>Follow roads</strong> asks the public <a href="https://project-osrm.org/" target="_blank" rel="noopener">OSRM</a> demo server for a driving route and collects the hexagons along it. If the server is down, no road connects the two places, or a pin is far from any road, you get the hex walk instead.</li>
+      <li><strong>Hex walk</strong> (or pentagon walk) is greedy local routing: at every cell, step to the neighbour nearest the destination. It runs entirely in your browser and cheerfully crosses oceans.</li>
+      <li><strong>Follow roads</strong> asks the public <a href="https://project-osrm.org/" target="_blank" rel="noopener">OSRM</a> demo server for a driving route and collects the cells along it. If the server is down, no road connects the two places, or a pin is far from any road, you get the hex walk instead.</li>
     </ul>
     <h3>Playing it</h3>
     <p>Pick a style for a ready-made band, or set the time signature and tempo yourself. Open <strong>Rhythm</strong> to choose the strum pattern and <strong>Band</strong> to choose the guitar, add drums and bass, and balance them. Press play (or the space bar). Changes take effect at the next bar line, so you can rearrange the song while it plays. Select any stop in the chord chart to jump there.</p>
     <p>The share button copies a link that opens this trip with this sound. The download button saves the song as a WAV file.</p>
     <p class="fine">On an iPhone, flip the ring/silent switch to ring if you hear nothing.</p>
     <h3>Going live</h3>
-    <p><strong>Go live</strong> follows your location instead of a planned route. The hexagon you are in plays its three chords (those of its centre point) round and round until you cross into the next, so a hexagon sounds the same every time and for everyone. Hexagons are about 50 m across on foot and larger when you travel faster, because a phone’s sense of where it is wanders by several metres.</p>
+    <p><strong>Go live</strong> follows your location instead of a planned route. The cell you are in plays its three chords (those of its centre point) round and round until you cross into the next, so a cell sounds the same every time and for everyone. Cells are about 50 m across on foot and larger when you travel faster, because a phone’s sense of where it is wanders by several metres.</p>
     <p>The page keeps the screen awake while a session runs, because a web page cannot keep playing once the phone locks. When you end the session the route becomes an ordinary trip you can replay, and a recording of what you heard can be downloaded. Neither is kept once you close the page.</p>
     <p>This page does not send your location anywhere. Two things to know: the map loads its tiles for wherever you are from CARTO, as any online map does, and a link to the route is only made if you press share and agree.</p>
     <h3>Credits</h3>
     <p class="fine">This page is a recreation based on the original <a href="https://github.com/DOSull/what3chords" target="_blank" rel="noopener">what3chords</a> by David O’Sullivan, Luke Bergmann, Jim Thatcher and Nick Lally. The idea, the place-to-chords scheme, the chord code book and the guitar samples come from that project. Licensing is under discussion with the original authors; until it is settled, please ask before reusing any of it.</p>
-    <p class="fine">Place search by <a href="https://nominatim.org/" target="_blank" rel="noopener">Nominatim</a> and <a href="https://photon.komoot.io/" target="_blank" rel="noopener">Photon</a>, map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors, basemap © <a href="https://carto.com/attributions" target="_blank" rel="noopener">CARTO</a>. Built with MapLibre GL JS, h3-js and Tone.js.</p>
+    <p class="fine">Place search by <a href="https://nominatim.org/" target="_blank" rel="noopener">Nominatim</a> and <a href="https://photon.komoot.io/" target="_blank" rel="noopener">Photon</a>, map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors, basemap © <a href="https://carto.com/attributions" target="_blank" rel="noopener">CARTO</a>. Built with MapLibre GL JS, h3-js, a5-js and Tone.js.</p>
     <p class="fine">Steel-string acoustic recorded by the <a href="https://theremin.music.uiowa.edu/MIS.html" target="_blank" rel="noopener">University of Iowa Electronic Music Studios</a>; nylon guitar by <a href="https://freesound.org/people/quartertone/packs/11573/" target="_blank" rel="noopener">quartertone on Freesound</a> (CC BY 4.0); electric bass by <a href="https://www.karoryfer.com/karoryfer-samples" target="_blank" rel="noopener">Karoryfer Samples</a> (CC0). All three as edited for the <a href="https://github.com/nbrosowsky/tonejs-instruments" target="_blank" rel="noopener">tonejs-instruments</a> collection by Nicholaus Brosowsky (CC BY 3.0), then trimmed and re-encoded here. Drums are synthesised in your browser.</p>
   </dialog>
 
   <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@5.24.0/dist/maplibre-gl.js" integrity="sha384-5+cfbwT0iiub6VsQAdn6yz16nr6sDiQoHx6tm4O8OVYXHYOxcffFmCJBL0dgdvGp" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/h3-js@4.5.0/dist/h3-js.umd.js" integrity="sha384-btAksX4N/Qw1lEPyJQdtZC59TR3dvM7HgYngL8bCs7Dtysie9D3TiJ0GGFZBbXAy" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/a5-js@0.10.1/dist/a5.umd.js" integrity="sha384-0FTiJ4LTjbRNF/N+wsqL/XhUP5W5VxX75pPgCpWlMl53PW9trEYPQSaXzuWarWRI" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/tone@15.1.22/build/Tone.js" integrity="sha384-NWoslxaf/3dYwQk+uGziDYJFdsjBpVlU1WpFRexuDFcIk/5PJpCbpVXia2Uikeix" crossorigin="anonymous"></script>
+  <script>
+    // Just after an update, a browser can hold a mix of old and new script
+    // files that don't fit together, and the page then fails before it
+    // starts. Refresh the scripts and reload, once; if that doesn't cure it,
+    // say so instead of sitting on "Tuning up…" for ever.
+    window.addEventListener("error", function () {
+      var loading = document.getElementById("loading");
+      if (!loading || loading.classList.contains("done") || loading.classList.contains("failed")) return;
+      var tried = false;
+      try { tried = sessionStorage.getItem("w3c-refreshed") === "1"; sessionStorage.setItem("w3c-refreshed", "1"); } catch (e) { tried = true; }
+      if (tried) {
+        loading.classList.add("failed");
+        document.getElementById("loading-text").textContent = "The page didn’t start. Try reloading it in a minute.";
+        return;
+      }
+      var scripts = ["app", "audio", "band", "chords", "diagram", "geocode", "grid", "link", "live", "patterns", "routing"];
+      Promise.all(scripts.map(function (name) {
+        return fetch("./js/" + name + ".js", { cache: "reload" }).catch(function () {});
+      })).then(function () { location.reload(); });
+    });
+  </script>
   <script type="module" src="./js/app.js"></script>
 </body>
 </html>

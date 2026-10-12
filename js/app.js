@@ -2,9 +2,10 @@ import { loadChords, chordsFor } from "./chords.js";
 import { chordDiagram } from "./diagram.js";
 import { geocode, formatLatLng } from "./geocode.js";
 import {
-  buildHexRoute, buildRoadRoute, buildPathRoute, RoutingError, hexSpacingKm, pointAt, trackUpTo,
+  buildWalkRoute, buildRoadRoute, buildPathRoute, RoutingError, pointAt, trackUpTo,
   stopsToGeoJSON, wrapLng,
 } from "./routing.js";
+import { GRIDS } from "./grid.js";
 import {
   PATTERNS, SIGNATURES, DRUM_STYLES, STYLES, findPattern, patternTokens, gridLabels, slotsPerBar,
 } from "./patterns.js";
@@ -23,13 +24,14 @@ const MAP_COLOURS = {
   light: { hex: "#17160f", played: "#d6004f", current: "#ffd60a", track: "rgba(23,22,15,0.5)", casing: "#fffdf8" },
 };
 const LENGTHS = {
-  short: { name: "Short", stops: 10, explain: "About 10 stops at most. Big hexagons, a quick sketch of the trip." },
+  short: { name: "Short", stops: 10, explain: "About 10 stops at most. Big {cells}, a quick sketch of the trip." },
   medium: { name: "Medium", stops: 28, explain: "About 28 stops at most. A proper song." },
-  long: { name: "Long", stops: 75, explain: "About 75 stops at most. Small hexagons, the album version." },
+  long: { name: "Long", stops: 75, explain: "About 75 stops at most. Small {cells}, the album version." },
 };
+// {cell}, {cells} and {walk} are filled in for the grid in use.
 const MODES = {
-  hex: { name: "Hex walk", explain: "Greedy local routing: from each hexagon, step to whichever neighbour is nearest the destination. Worked out in your browser, and it ignores roads, rivers and oceans." },
-  road: { name: "Follow roads", explain: "Asks the public OSRM server for a driving route and plays the hexagons it passes through. If no road connects the two places, or either pin is far from any road, you get the hex walk instead." },
+  hex: { name: "{walk}", explain: "Greedy local routing: from each {cell}, step to whichever neighbour is nearest the destination. Worked out in your browser, and it ignores roads, rivers and oceans." },
+  road: { name: "Follow roads", explain: "Asks the public OSRM server for a driving route and plays the {cells} it passes through. If no road connects the two places, or either pin is far from any road, you get the {walk} instead." },
 };
 const PER_STOP_EXPLAIN = {
   3: "Every stop plays all three of its chords, one bar each: the full what3chords address of each place you pass. Three bars per stop.",
@@ -61,6 +63,7 @@ const $ = (id) => document.getElementById(id);
 const escapeHTML = (text) => String(text).replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
 
 const state = {
+  grid: "h3", // which address system: see grid.js
   start: null, // { lat, lng, label }
   end: null,
   mode: "hex",
@@ -148,6 +151,16 @@ function saveBlob(blob, filename) {
   link.click();
   link.remove();
   setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+function grid() {
+  return GRIDS[state.grid];
+}
+
+// Fills {cell}, {cells} and {walk} in a piece of interface text.
+function worded(text) {
+  const g = grid();
+  return text.replace("{cells}", g.cells).replace("{cell}", g.cell).replace("{walk}", g.walk.toLowerCase());
 }
 
 function songTitle() {
@@ -338,8 +351,8 @@ function fitRoute(animate = true) {
   if (!route) return;
   const bounds = new maplibregl.LngLatBounds();
   for (const point of route.track) bounds.extend(point);
-  for (const hexagon of stopsToGeoJSON(route).features) {
-    for (const vertex of hexagon.geometry.coordinates[0]) bounds.extend(vertex);
+  for (const cell of stopsToGeoJSON(route).features) {
+    for (const vertex of cell.geometry.coordinates[0]) bounds.extend(vertex);
   }
   const stage = $("stage").getBoundingClientRect();
   const deck = $("deck").getBoundingClientRect();
@@ -459,14 +472,14 @@ function showCandidates(which, results, chosen, open = false) {
 // ---------------------------------------------------------------------------
 
 function pathRoute() {
-  const route = buildPathRoute(state.path);
+  const route = buildPathRoute(grid(), state.path);
   route.stops.forEach((stop, i) => {
     const entry = state.path[i];
-    // A recorded stop plays its hexagon's chords, taken at the centre, so
+    // A recorded stop plays its cell's chords, taken at the centre, so
     // they don't depend on the exact point stored or shared.
     if (!entry.chords) {
-      const centre = h3.cellToLatLng(stop.cell);
-      entry.chords = chordsFor(centre[0], centre[1]);
+      const centre = grid().centre(stop.cell);
+      entry.chords = chordsFor(centre[0], centre[1], state.grid);
     }
     stop.chords = entry.chords;
   });
@@ -498,18 +511,18 @@ async function rebuildRoute({ fit = true } = {}) {
       drawRoute();
       renderRoute();
       try {
-        route = await buildRoadRoute(a, b, maxStops, routeAbort.signal);
+        route = await buildRoadRoute(grid(), a, b, maxStops, routeAbort.signal);
       } catch (error) {
         if (request !== routeRequest) return;
         if (!(error instanceof RoutingError)) console.warn(error);
         const why = error instanceof RoutingError ? error.message : "road routing failed";
-        note = `Couldn’t follow roads: ${why}. Walked the hexagons instead.`;
+        note = `Couldn’t follow roads: ${why}. Walked the ${grid().cells} instead.`;
       }
       if (request !== routeRequest) return;
       state.routePending = false;
     }
-    if (!route) route = buildHexRoute(a, b, maxStops);
-    for (const stop of route.stops) stop.chords = chordsFor(stop.point[0], stop.point[1]);
+    if (!route) route = buildWalkRoute(grid(), a, b, maxStops);
+    for (const stop of route.stops) stop.chords = chordsFor(stop.point[0], stop.point[1], state.grid);
     route.note = note;
     state.route = route;
   }
@@ -560,7 +573,7 @@ function renderRoute() {
       : route.mode === "road"
         ? `${formatKm(route.distanceKm)} by road`
         : `${formatKm(route.straightKm)} as the crow flies`;
-    facts = `${distance} · hexagons about ${formatKm(hexSpacingKm(route.res))} across`;
+    facts = `${distance} · ${route.grid.cells} about ${formatKm(route.grid.spacingKm(route.res))} across`;
     if (route.note) notes.push(route.note);
     if (route.mode === "road" && route.snapKm) {
       const far = Math.max(...route.snapKm);
@@ -620,7 +633,7 @@ function renderSongInfo(position) {
   const count = `${stops} ${stops === 1 ? "stop" : "stops"}`;
   if (live) {
     const fix = live.fix;
-    const gps = fix ? ` · ${paceName(fix.res)} · GPS ±${Math.round(fix.accuracy)} m` : "";
+    const gps = fix ? ` · ${paceName(fix.pace)} · GPS ±${Math.round(fix.accuracy)} m` : "";
     $("deck-sub").textContent = live.started
       ? `Live · ${count} · ${formatKm(state.route.distanceKm)}${gps}`
       : "Waiting for a location fix…";
@@ -784,7 +797,7 @@ function drawTravelled(route, km) {
   }
 }
 
-// Marks which stop and chord are up: hexagons on the map, the chord cards
+// Marks which stop and chord are up: cells on the map, the chord cards
 // and the chart.
 function showStop(route, stop, which, played, sounding) {
   const key = `${stop}:${which}:${played}:${sounding}:${route.stops.length}`;
@@ -814,7 +827,7 @@ function showStop(route, stop, which, played, sounding) {
   }
 }
 
-// Paints everything that depends on where the song is: marker, hexagons,
+// Paints everything that depends on where the song is: marker, cells,
 // progress line, chord cards and chart. With no position, shows the cue.
 function renderPlayhead(position) {
   const route = state.route;
@@ -974,7 +987,7 @@ async function playSpot() {
 
 function openSpot(lat, lng, autoplay) {
   if (spot) spot.popup.remove();
-  const chords = chordsFor(lat, lng);
+  const chords = chordsFor(lat, lng, state.grid);
   const content = document.createElement("div");
   content.className = "spot";
   content.innerHTML = `
@@ -1038,7 +1051,7 @@ function startLive() {
   // for a position.
   Tone.start();
   live = {
-    session: new LiveSession({ onStop: onLiveStop, onFix: onLiveFix, onError: onLiveError }),
+    session: new LiveSession(grid(), { onStop: onLiveStop, onFix: onLiveFix, onError: onLiveError }),
     recorder: null,
     started: false,
     fix: null,
@@ -1067,8 +1080,8 @@ function onLiveFix(fix) {
   const first = !live.fix;
   live.fix = fix;
   if (first || $("follow").checked) {
-    // Close enough to see a few hexagons around you.
-    const metresPerPixel = (hexSpacingKm(fix.res) * 1000) / 110;
+    // Close enough to see a few cells around you.
+    const metresPerPixel = (grid().spacingKm(fix.res) * 1000) / 110;
     const zoom = Math.log2((78271.5 * Math.cos((fix.point[0] * Math.PI) / 180)) / metresPerPixel);
     map.easeTo({ center: [fix.point[1], fix.point[0]], zoom: first ? Math.min(19, zoom) : map.getZoom(), duration: 600 });
   }
@@ -1189,7 +1202,7 @@ async function share() {
   if (state.path && !state.pathShared) {
     // A travelled route says where someone has been; ask first.
     $("share-title").textContent = "Share this route?";
-    $("share-text").textContent = "The link will draw the route you travelled, hexagon by hexagon, including where you started and stopped. Anyone who has the link can see it.";
+    $("share-text").textContent = `The link will draw the route you travelled, ${grid().cell} by ${grid().cell}, including where you started and stopped. Anyone who has the link can see it.`;
     $("share-link").hidden = true;
     $("share-confirm").hidden = false;
     $("share-cancel").textContent = "Cancel";
@@ -1284,6 +1297,15 @@ function fillSelect(select, options, value) {
   select.value = value;
 }
 
+// Everything on the page that names the grid or its cells.
+function renderGridWording() {
+  $("grid-explain").textContent = grid().explain;
+  $("walk-label").textContent = grid().walk;
+  $("mode-explain").textContent = worded(MODES[state.mode].explain);
+  $("length-explain").textContent = worded(LENGTHS[state.length].explain);
+  renderSummaries();
+}
+
 function fillPatternSelect() {
   fillSelect($("pattern"), PATTERNS[state.signature].map((pattern) => [pattern.id, pattern.name]), state.patternId);
 }
@@ -1306,7 +1328,8 @@ function renderStyle() {
 
 // The one-line "what's selected" text on each collapsed section.
 function renderSummaries() {
-  $("route-now").textContent = state.path ? "Recorded route" : `${MODES[state.mode].name} · ${LENGTHS[state.length].name}`;
+  const walk = state.mode === "hex" ? grid().walk : `Roads, ${grid().cells}`;
+  $("route-now").textContent = state.path ? `Recorded route · ${grid().cells}` : `${walk} · ${LENGTHS[state.length].name}`;
   const pattern = findPattern(state.signature, state.patternId);
   $("rhythm-now").textContent = `${pattern.name} · ${state.perStop === 3 ? "3 chords" : "1 chord"} a stop`;
   const drumStyle = DRUM_STYLES.find((style) => style.id === state.drumStyle);
@@ -1485,10 +1508,20 @@ function bindControls() {
     rebuildRoute();
   });
 
+  for (const input of document.querySelectorAll('input[name="grid"]')) {
+    input.addEventListener("change", () => {
+      state.grid = radioValue("grid");
+      // The spot popup shows the other grid's chords for that point.
+      if (spot) spot.popup.remove();
+      renderGridWording();
+      writeHash();
+      rebuildRoute();
+    });
+  }
   for (const input of document.querySelectorAll('input[name="mode"]')) {
     input.addEventListener("change", () => {
       state.mode = radioValue("mode");
-      $("mode-explain").textContent = MODES[state.mode].explain;
+      $("mode-explain").textContent = worded(MODES[state.mode].explain);
       writeHash();
       rebuildRoute();
     });
@@ -1496,7 +1529,7 @@ function bindControls() {
   for (const input of document.querySelectorAll('input[name="length"]')) {
     input.addEventListener("change", () => {
       state.length = radioValue("length");
-      $("length-explain").textContent = LENGTHS[state.length].explain;
+      $("length-explain").textContent = worded(LENGTHS[state.length].explain);
       writeHash();
       rebuildRoute();
     });
@@ -1566,7 +1599,7 @@ function bindControls() {
     if (!$("follow").checked || !state.route) return;
     // Close enough that neighbouring stops are about 110 px apart.
     const at = markers.playhead ? markers.playhead.getLngLat() : map.getCenter();
-    const metresPerPixel = (hexSpacingKm(state.route.res) * 1000) / 110;
+    const metresPerPixel = (state.route.grid.spacingKm(state.route.res) * 1000) / 110;
     const zoom = Math.log2((78271.5 * Math.cos((at.lat * Math.PI) / 180)) / metresPerPixel);
     map.easeTo({ center: at, zoom: Math.max(1.5, Math.min(21, zoom)), duration: 600 });
   });
@@ -1621,8 +1654,8 @@ function syncControls() {
   document.querySelector(`input[name="mode"][value="${state.mode}"]`).checked = true;
   document.querySelector(`input[name="length"][value="${state.length}"]`).checked = true;
   document.querySelector(`input[name="perstop"][value="${state.perStop}"]`).checked = true;
-  $("mode-explain").textContent = MODES[state.mode].explain;
-  $("length-explain").textContent = LENGTHS[state.length].explain;
+  document.querySelector(`input[name="grid"][value="${state.grid}"]`).checked = true;
+  renderGridWording();
   $("perstop-explain").textContent = PER_STOP_EXPLAIN[state.perStop];
   for (const which of ["start", "end"]) {
     places[which].input.value = state[which] ? state[which].label : "";
@@ -1643,7 +1676,7 @@ function syncControls() {
 // ---------------------------------------------------------------------------
 
 async function main() {
-  const missing = ["maplibregl", "h3", "Tone"].filter((name) => !(name in window));
+  const missing = ["maplibregl", "h3", "A5", "Tone"].filter((name) => !(name in window));
   if (missing.length) throw new Error("Some of the page’s libraries didn’t load. Check your connection and reload.");
   const fromLink = decodeHash(location.hash);
   Object.assign(state, fromLink);
@@ -1666,6 +1699,7 @@ async function main() {
   });
   requestAnimationFrame(frame);
   $("loading").classList.add("done");
+  try { sessionStorage.removeItem("w3c-refreshed"); } catch (error) { /* private mode */ }
 }
 
 main().catch((error) => {

@@ -1,36 +1,40 @@
 // A live session: follow the device's position and turn it into stops, one
-// per hexagon entered. The hexagons are far bigger than the ~1 m cells the
+// per grid cell entered. The cells are far bigger than the ~1 m cells the
 // chords come from, because a phone's idea of where it is wanders by many
 // metres; the size also grows with speed so a drive isn't a blur of chords.
-// Each stop stands at its hexagon's centre, so a hexagon sounds the same
+// Each stop stands at its cell's centre, so a cell sounds the same
 // whoever walks into it and from whichever side.
 
-import { haversineKm, hexSpacingKm } from "./routing.js";
+import { haversineKm } from "./routing.js";
 
 const MAX_USABLE_ACCURACY_M = 150;
 const MAX_FIRST_FIX_ACCURACY_M = 100;
-const SPEED_STEPS = [[2.5, 11], [7, 10], [14, 9]];
+// Speeds, in metres per second, at which the pace changes: on foot below
+// the first, on a bike below the second, driving in town below the third.
+const PACE_LIMITS = [2.5, 7, 14];
+const PACE_NAMES = ["walking pace", "cycling pace", "driving in town", "driving"];
 const RES_SETTLE_MS = 8000;
 const DWELL_MS = 3000;
 
-// H3 resolution for a speed in metres per second: about 50 m hexagons on
-// foot, 130 m on a bike, 350 m in town traffic, 900 m on the open road.
-export function resolutionForSpeed(mps) {
-  for (const [limit, res] of SPEED_STEPS) if (mps < limit) return res;
-  return 8;
+// The pace (0 walking .. 3 driving) for a speed in metres per second. Each
+// grid lists a cell size for each pace: roughly 50 m across on foot, 130 m
+// on a bike, 350 m in town traffic and 900 m on the open road.
+export function paceForSpeed(mps) {
+  const pace = PACE_LIMITS.findIndex((limit) => mps < limit);
+  return pace < 0 ? PACE_LIMITS.length : pace;
 }
 
-// The same, but reluctant to leave the current size when the speed is only
+// The same, but reluctant to leave the current pace when the speed is only
 // just over the line, so a steady jog at the boundary doesn't flip-flop.
-function steadyResolution(mps, current) {
-  const wanted = resolutionForSpeed(mps);
+function steadyPace(mps, current) {
+  const wanted = paceForSpeed(mps);
   if (Math.abs(wanted - current) !== 1) return wanted;
-  const [limit] = SPEED_STEPS.find(([, res]) => res === Math.max(wanted, current));
+  const limit = PACE_LIMITS[Math.min(wanted, current)];
   return Math.abs(mps - limit) < limit * 0.15 ? current : wanted;
 }
 
-export function paceName(res) {
-  return { 11: "walking pace", 10: "cycling pace", 9: "driving in town", 8: "driving" }[res] || "moving";
+export function paceName(pace) {
+  return PACE_NAMES[pace] || "moving";
 }
 
 function formatAccuracy(metres) {
@@ -44,17 +48,19 @@ export function liveSupport() {
 }
 
 export class LiveSession {
-  // onStop(stop) for each new hexagon, onFix(fix) for every usable position,
+  // onStop(stop) for each new cell, onFix(fix) for every usable position,
   // onError(message, fatal) when the browser can't give one.
-  constructor({ onStop, onFix, onError }) {
+  constructor(grid, { onStop, onFix, onError }) {
+    this.grid = grid;
     this.onStop = onStop;
     this.onFix = onFix;
     this.onError = onError;
-    this.stops = []; // { point: hexagon centre [lat, lng], res, time, entry }
-    this.res = resolutionForSpeed(0);
+    this.stops = []; // { point: cell centre [lat, lng], res, time, entry }
+    this.pace = 0;
+    this.res = grid.liveRes[0];
     this.speed = 0;
     this.last = null;
-    this.pendingRes = null;
+    this.pendingPace = null;
     this.candidate = null;
     this.watch = null;
     this.wakeLock = null;
@@ -126,14 +132,15 @@ export class LiveSession {
     this.settleResolution(time);
     fix.speed = this.speed;
     fix.res = this.res;
+    fix.pace = this.pace;
 
     const current = this.stops[this.stops.length - 1];
     if (!current) {
       this.addStop(fix);
     } else {
-      const here = h3.latLngToCell(lat, lng, this.res);
-      const there = h3.latLngToCell(current.point[0], current.point[1], this.res);
-      // (After a change of hexagon size, "there" is the new-size hexagon
+      const here = this.grid.cellAt(lat, lng, this.res);
+      const there = this.grid.cellAt(current.point[0], current.point[1], this.res);
+      // (After a change of cell size, "there" is the new-size cell
       // around the old stop.)
       if (here === there) {
         this.candidate = null;
@@ -144,32 +151,33 @@ export class LiveSession {
         // as a move only once it has stuck and is a real distance away.
         const settled = this.candidate.fixes >= 2 || time - this.candidate.since >= DWELL_MS;
         const movedKm = haversineKm(current.entry, fix.point);
-        if (settled && movedKm > 0.6 * hexSpacingKm(this.res)) this.addStop(fix);
+        if (settled && movedKm > 0.6 * this.grid.spacingKm(this.res)) this.addStop(fix);
       }
     }
     this.onFix(fix);
   }
 
-  // Change hexagon size only once the new pace has lasted a while, so a
+  // Change cell size only once the new pace has lasted a while, so a
   // red light or a sprint for the bus doesn't.
   settleResolution(time) {
-    const wanted = steadyResolution(this.speed, this.res);
-    if (wanted === this.res) {
-      this.pendingRes = null;
-    } else if (!this.pendingRes || this.pendingRes.res !== wanted) {
-      this.pendingRes = { res: wanted, since: time };
-    } else if (time - this.pendingRes.since >= RES_SETTLE_MS) {
-      this.res = wanted;
-      this.pendingRes = null;
+    const wanted = steadyPace(this.speed, this.pace);
+    if (wanted === this.pace) {
+      this.pendingPace = null;
+    } else if (!this.pendingPace || this.pendingPace.pace !== wanted) {
+      this.pendingPace = { pace: wanted, since: time };
+    } else if (time - this.pendingPace.since >= RES_SETTLE_MS) {
+      this.pace = wanted;
+      this.res = this.grid.liveRes[wanted];
+      this.pendingPace = null;
       this.candidate = null;
     }
   }
 
   addStop(fix) {
-    const cell = h3.latLngToCell(fix.point[0], fix.point[1], this.res);
+    const cell = this.grid.cellAt(fix.point[0], fix.point[1], this.res);
     // `entry`, where the device actually was, is only for judging the next
     // move; it is never part of the route.
-    const stop = { point: h3.cellToLatLng(cell), res: this.res, time: fix.time, entry: fix.point };
+    const stop = { point: this.grid.centre(cell), res: this.res, time: fix.time, entry: fix.point };
     this.stops.push(stop);
     this.candidate = null;
     this.onStop(stop);

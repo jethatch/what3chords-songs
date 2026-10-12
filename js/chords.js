@@ -1,12 +1,11 @@
-// The what3chords code book: every ~1 m² H3 cell on Earth maps to three
-// guitar chord voicings. This is a port of the original scheme from
-// https://github.com/DOSull/what3chords so that a place gets the same three
+// The what3chords code book: every place on Earth maps to three guitar
+// chord voicings. A grid (see grid.js) turns the place into a number; this
+// turns the number into chords. With the H3 grid it is a port of the scheme
+// from https://github.com/DOSull/what3chords, so a place gets the same three
 // chords here as it does there.
 
-const H3_RES = 15;
-// Permutation of the 15 base-7 H3 digits, so that neighbouring cells don't
-// share most of their chords (SEVENS_FWD in the original).
-const DIGIT_SCRAMBLE = [0, 5, 10, 1, 6, 11, 2, 7, 12, 3, 8, 13, 4, 9, 14];
+import { GRIDS } from "./grid.js";
+
 // Standard tuning, low E to high E.
 const OPEN_STRINGS = [40, 45, 50, 55, 59, 64];
 const FRET_DIGITS = "0123456789abcdefghijklmnopqrstuvwxyz";
@@ -64,28 +63,15 @@ function harmony(name) {
   return { root: pitchClass(root), bass: pitchClass(slash || root), fifth };
 }
 
-// The H3 cell as one number: base cell, then its 15 (scrambled) base-7 digits.
-function cellToNumber(cell) {
-  const bits = BigInt("0x" + cell);
-  const baseCell = Number((bits >> 45n) & 0x7fn);
-  const digits = new Array(H3_RES);
-  for (let res = 0; res < H3_RES; res++) {
-    const digit = Number((bits >> BigInt(3 * (H3_RES - 1 - res))) & 7n);
-    digits[DIGIT_SCRAMBLE[res]] = digit;
-  }
-  let n = baseCell;
-  for (const digit of digits) n = n * 7 + digit;
-  return n;
-}
-
-// Three code book indices for a point: the cell number written in base
-// `voicingCount`. (122 x 7^15 cells fit comfortably inside 167,011^3.)
-export function codeFor(lat, lng) {
-  const n = cellToNumber(h3.latLngToCell(lat, lng, H3_RES));
+// Three code book indices for a point: its address number on the chosen
+// grid, written in base `voicingCount`. (Both grids' numbers fit inside
+// 167,011^3.)
+export function codeFor(lat, lng, grid = "h3") {
+  const n = GRIDS[grid].number(lat, lng);
   const N = voicingCount;
   return [Math.floor(n / (N * N)), Math.floor(n / N) % N, n % N];
 }
 
-export function chordsFor(lat, lng) {
-  return codeFor(lat, lng).map(chordAt);
+export function chordsFor(lat, lng, grid = "h3") {
+  return codeFor(lat, lng, grid).map(chordAt);
 }

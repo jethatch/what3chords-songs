@@ -3,6 +3,7 @@
 
 import { PATTERNS, SIGNATURES, DRUM_STYLES, findPattern } from "./patterns.js";
 import { GUITARS } from "./band.js";
+import { GRIDS } from "./grid.js";
 import { formatLatLng } from "./geocode.js";
 
 const MODES = ["hex", "road"];
@@ -41,10 +42,11 @@ export function encodePath(entries) {
     if (last && last.res === res) last.count++;
     else runs.push({ res, count: 1 });
   }
-  return { points, sizes: runs.map((run) => `${run.res.toString(16)}${run.count}`).join(".") };
+  return { points, sizes: runs.map((run) => `${run.res.toString(36)}${run.count}`).join(".") };
 }
 
-export function decodePath(points, sizes) {
+// `maxRes` is the finest cell size the route's grid has.
+export function decodePath(points, sizes, maxRes) {
   const numbers = [];
   let value = 0;
   let shift = 0;
@@ -66,9 +68,9 @@ export function decodePath(points, sizes) {
   // anything else is a damaged or hostile link, and not worth expanding.
   const resolutions = [];
   for (const run of (sizes || "").split(".")) {
-    const match = run.match(/^([0-9a-f])(\d{1,4})$/);
-    if (!match || resolutions.length + Number(match[2]) > count) return null;
-    for (let i = 0; i < Number(match[2]); i++) resolutions.push(parseInt(match[1], 16));
+    const match = run.match(/^([0-9a-z])(\d{1,4})$/);
+    if (!match || parseInt(match[1], 36) > maxRes || resolutions.length + Number(match[2]) > count) return null;
+    for (let i = 0; i < Number(match[2]); i++) resolutions.push(parseInt(match[1], 36));
   }
   if (resolutions.length !== count) return null;
   const entries = [];
@@ -92,6 +94,7 @@ export function decodePath(points, sizes) {
 // Settings only appear once they differ from the defaults, to keep links short.
 export function encodeState(state, includePath) {
   const params = new URLSearchParams();
+  if (state.grid !== "h3") params.set("gr", state.grid);
   if (state.path) {
     if (includePath) {
       const { points, sizes } = encodePath(state.path);
@@ -121,7 +124,9 @@ export function encodeState(state, includePath) {
 export function decodeHash(hash) {
   const params = new URLSearchParams(hash.replace(/^#/, ""));
   const found = {};
-  const path = params.get("lv") ? decodePath(params.get("lv"), params.get("lr")) : null;
+  if (Object.hasOwn(GRIDS, params.get("gr") || "")) found.grid = params.get("gr");
+  const grid = GRIDS[found.grid || "h3"];
+  const path = params.get("lv") ? decodePath(params.get("lv"), params.get("lr"), grid.maxRes) : null;
   if (path) {
     found.path = path;
   } else {

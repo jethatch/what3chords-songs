@@ -23,11 +23,12 @@ Further reading:
 The original lets you click the map and hear that spot's three chords. This version keeps that, and adds journeys:
 
 - **Start and end by name.** Type "Boston, MA" and a pin drops there. Place search uses [Nominatim](https://nominatim.org/) with [Photon](https://photon.komoot.io/) as a fallback; neither needs a key. You can also type `lat, lng`, click the map, or drag the pins.
-- **A route made of hexagons.** *Hex walk* is greedy local routing over the [H3](https://h3geo.org/) grid, computed in the browser: from each hexagon, step to the neighbour nearest the destination. *Follow roads* asks the public [OSRM](https://project-osrm.org/) demo server for a driving route and collects the hexagons along it, falling back to the hex walk when there is no road or no server. The hexagon size is chosen so the trip has a sensible number of stops (short, medium or long).
+- **A route made of grid cells.** *Hex walk* is greedy local routing over the [H3](https://h3geo.org/) grid, computed in the browser: from each hexagon, step to the neighbour nearest the destination. *Follow roads* asks the public [OSRM](https://project-osrm.org/) demo server for a driving route and collects the cells along it, falling back to the walk when there is no road or no server. The cell size is chosen so the trip has a sensible number of stops (short, medium or long).
+- **Two grids.** Under Route options the grid can be switched from H3's hexagons to [A5](https://a5geo.org/)'s equal-area pentagons. Everything else works the same way, but every place gets three different chords (see below).
 - **A song.** Press play and a marker travels the route while a strummed guitar plays each stop's chords. Choose the time signature (4/4, 3/4, 6/8, 2/4, 5/4, 7/8), tempo, strum pattern, and whether each stop plays all three of its chords or just one. Changes take effect at the next bar line.
 - **A band.** A Style menu sets up a whole sound in one go (punk trio, campfire acoustic, reggae, waltz and so on). Underneath it you can pick the guitar (electric clean, crunch, fuzz, chorus or 12-string; steel-string, 12-string or nylon acoustic), switch on drums and bass that follow the strum pattern, choose a different drum style, and balance the three.
 - **Sharing.** The page address carries the trip and every sound setting, and the share button copies it. Opening a shared link shows a "Play this song" prompt, because browsers won't start audio without a click. The download button renders the song to a WAV file.
-- **Live sessions.** "Go live" follows the device's location: the hexagon you are in loops its three chords, and the chords change as you move into the next. Hexagons are about 50 m across on foot and grow with speed. Ending the session leaves the route as a trip you can replay or share, and offers what you heard as a download. The page keeps the screen awake while a session runs, because a web page cannot play from a locked phone. The route and recording last only until the page is closed. The page itself sends your location nowhere; the map does load tiles for wherever you are from CARTO, and a link to the route is made only if you choose to share it.
+- **Live sessions.** "Go live" follows the device's location: the cell you are in loops its three chords, and the chords change as you move into the next. Cells are about 50 m across on foot and grow with speed. Ending the session leaves the route as a trip you can replay or share, and offers what you heard as a download. The page keeps the screen awake while a session runs, because a web page cannot play from a locked phone. The route and recording last only until the page is closed. The page itself sends your location nowhere; the map does load tiles for wherever you are from CARTO, and a link to the route is made only if you choose to share it.
 
 Most of the options are folded away. The page opens with start, end, style, time signature and tempo; route, rhythm and band details expand when wanted.
 
@@ -54,8 +55,9 @@ Everything is in the part after `#`, so nothing is sent to a server.
 | Key | Meaning |
 |---|---|
 | `a`, `b`, `an`, `bn` | start and end as `lat,lng`, and their labels |
+| `gr` | grid (`a5`; H3 when absent) |
 | `m`, `l` | route mode (`road`) and song length (`short`, `long`) |
-| `lv`, `lr` | a recorded route instead of start and end: encoded points, and hexagon sizes |
+| `lv`, `lr` | a recorded route instead of start and end: encoded points, and cell sizes |
 | `ts`, `p`, `bpm`, `c` | time signature (`3-4`), strum pattern, tempo, chords per stop (`1`) |
 | `g`, `d`, `bs` | guitar, drums (`1` or a drum style), bass (`1`) |
 
@@ -63,13 +65,24 @@ Defaults are left out. A road-mode link asks the routing server again when opene
 
 ## How a place becomes three chords
 
-Unchanged from the original, so a spot has the same chords here as there:
+On the H3 grid this is unchanged from the original, so a spot has the same chords here as there:
 
 1. Find the resolution-15 H3 cell (about 0.9 m²) containing the point.
 2. Take its base cell and 15 base-7 digits, shuffle the digits with a fixed permutation, and read the result as one number.
 3. Write that number in base 167,011, the number of voicings in the chord code book. The three digits index three chords.
 
-For a route stop, the point used is the pin itself (first and last stop of a planned trip), the hexagon's centre (hex walk, live sessions and recorded routes), or the middle of the road's passage through the hexagon (roads). Because live sessions use centres, a hexagon plays the same chords whoever enters it and from whichever side, and a shared live route reveals which hexagons were visited rather than exact positions.
+For a route stop, the point used is the pin itself (first and last stop of a planned trip), the cell's centre (hex walk, live sessions and recorded routes), or the middle of the road's passage through the cell (roads). Because live sessions use centres, a cell plays the same chords whoever enters it and from whichever side, and a shared live route reveals which cells were visited rather than exact positions.
+
+### The A5 addresses
+
+The A5 option applies the same recipe to a different grid, as a second, unofficial address system. Nothing about either grid makes its chords the right ones for a place, which is the point of having two.
+
+1. Find the resolution-23 A5 cell (about 0.5 m²) containing the point. A5 has no level at one square metre; 22 is about 1.9 m².
+2. Take which of the 60 fifths-of-a-face the cell is in and its 22 base-4 digits along A5's space-filling curve. Deal the digits out every third one first (the same construction as the original's shuffle of H3's base-7 digits), and read the result as one number.
+3. Multiply by four. There are about a quarter as many of these numbers as there are chord triples, and without this every first chord would come from the C family. (H3 addresses have that quirk: their first chords are all C, C# or Db chords.)
+4. Write the number in base 167,011, as before.
+
+The scheme depends on how `a5-js` numbers its cells. The library is pinned at 0.10.1 and is not yet at version 1; if a later version numbered cells differently, upgrading would change every place's A5 chords.
 
 ## Differences from the original
 
@@ -84,7 +97,8 @@ For a route stop, the point used is the pin itself (first and last stop of a pla
 index.html
 css/style.css
 js/app.js        UI, map, playhead
-js/chords.js     place -> three chords
+js/grid.js       the two grids (H3 hexagons, A5 pentagons) and their address numbers
+js/chords.js     address number -> three chords
 js/routing.js    hex walk, road route, recorded paths, track geometry
 js/geocode.js    place search
 js/patterns.js   strum patterns, drum grooves, bass lines, styles
@@ -99,11 +113,11 @@ img/preview.png  image for link previews
 tools/           data packing script
 ```
 
-Libraries (MapLibre GL JS, h3-js, Tone.js) load from jsDelivr at pinned versions.
+Libraries (MapLibre GL JS, h3-js, a5-js, Tone.js) load from jsDelivr at pinned versions.
 
 ## Licence
 
-Under discussion with the authors of the original what3chords. Neither that repository nor this one carries a licence yet, so please ask before reusing the code, the chord table (`data/chords.json`) or the electric guitar samples (`audio/guitar-electric/`). The libraries this page loads keep their own licences: MapLibre GL JS (BSD-3-Clause), h3-js (Apache-2.0) and Tone.js (MIT).
+Under discussion with the authors of the original what3chords. Neither that repository nor this one carries a licence yet, so please ask before reusing the code, the chord table (`data/chords.json`) or the electric guitar samples (`audio/guitar-electric/`). The libraries this page loads keep their own licences: MapLibre GL JS (BSD-3-Clause), h3-js (Apache-2.0), a5-js (Apache-2.0) and Tone.js (MIT).
 
 The other samples have known terms and are not part of that discussion:
 

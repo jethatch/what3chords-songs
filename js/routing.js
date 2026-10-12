@@ -1,9 +1,9 @@
-// Building a route between two points as an ordered list of H3 hexagons
+// Building a route between two points as an ordered list of grid cells
 // ("stops"). Two ways to get there:
-//   hex walk - greedy local routing: from each hexagon step to whichever
+//   hex walk - greedy local routing: from each cell step to whichever
 //              neighbour is nearest the destination. No server involved.
 //   roads    - ask the public OSRM server for a driving route and collect
-//              the hexagons it passes through.
+//              the cells it passes through.
 // Points are [lat, lng] throughout; GeoJSON-style [lng, lat] only appears in
 // the `track` that the map draws.
 
@@ -30,10 +30,6 @@ function unwrapLng(lng, reference) {
   return lng + Math.round((reference - lng) / 360) * 360;
 }
 
-// Centre-to-centre distance between neighbouring hexagons at a resolution.
-export function hexSpacingKm(res) {
-  return Math.sqrt(3) * h3.getHexagonEdgeLengthAvg(res, "km");
-}
 
 // Points along the great circle from a to b, excluding a, including b.
 function greatCircle(a, b) {
@@ -64,34 +60,27 @@ function greatCircle(a, b) {
 // Hex walk
 // ---------------------------------------------------------------------------
 
-// Greedy local routing over the hexagon grid at one resolution.
-function walkCells(start, end, res, maxCells) {
-  const target = h3.latLngToCell(end[0], end[1], res);
-  const targetCentre = h3.cellToLatLng(target);
-  let current = h3.latLngToCell(start[0], start[1], res);
-  let remaining = haversineKm(h3.cellToLatLng(current), targetCentre);
+// Greedy local routing over the cell grid at one resolution.
+function walkCells(grid, start, end, res, maxCells) {
+  const target = grid.cellAt(end[0], end[1], res);
+  const targetCentre = grid.centre(target);
+  let current = grid.cellAt(start[0], start[1], res);
+  let remaining = haversineKm(grid.centre(current), targetCentre);
   const cells = [current];
   while (current !== target && cells.length <= maxCells) {
     let best = null;
     let bestKm = remaining;
-    for (const neighbour of h3.gridDisk(current, 1)) {
-      if (neighbour === current) continue;
-      const km = neighbour === target ? 0 : haversineKm(h3.cellToLatLng(neighbour), targetCentre);
+    for (const neighbour of grid.neighbours(current)) {
+      const km = neighbour === target ? 0 : haversineKm(grid.centre(neighbour), targetCentre);
       if (km < bestKm) {
         best = neighbour;
         bestKm = km;
       }
     }
     if (!best) {
-      // No neighbour is closer (only possible where the grid is distorted
-      // around a pentagon); let H3 finish the line, or jump if it can't.
-      let rest;
-      try {
-        rest = h3.gridPathCells(current, target).slice(1);
-      } catch (error) {
-        rest = [target];
-      }
-      cells.push(...rest);
+      // No neighbour is closer (only possible where the grid is distorted);
+      // let the grid finish the line, or jump if it can't.
+      cells.push(...grid.lineTo(current, target));
       break;
     }
     cells.push(best);
@@ -101,25 +90,25 @@ function walkCells(start, end, res, maxCells) {
   return cells;
 }
 
-export function buildHexRoute(start, end, maxStops) {
+export function buildWalkRoute(grid, start, end, maxStops) {
   const straightKm = haversineKm(start, end);
   // Finest resolution whose walk should fit, then coarsen if it doesn't
   // (a hex walk is up to ~15% longer than the straight line).
-  let res = 15;
-  while (res > 0 && straightKm / hexSpacingKm(res) > maxStops - 1) res--;
+  let res = grid.maxRes;
+  while (res > 0 && straightKm / grid.spacingKm(res) > maxStops - 1) res--;
   // The coarsest grid has to be walked to the end however long that takes.
   const limit = (r) => (r > 0 ? maxStops : 500);
-  let cells = walkCells(start, end, res, limit(res));
+  let cells = walkCells(grid, start, end, res, limit(res));
   while (cells.length > maxStops && res > 0) {
     res--;
-    cells = walkCells(start, end, res, limit(res));
+    cells = walkCells(grid, start, end, res, limit(res));
   }
 
   const stops = cells.map((cell, i) => ({
     cell,
-    point: i === 0 ? start : i === cells.length - 1 ? end : h3.cellToLatLng(cell),
+    point: i === 0 ? start : i === cells.length - 1 ? end : grid.centre(cell),
   }));
-  // Start and end share a hexagon: still let the destination be heard.
+  // Start and end share a cell: still let the destination be heard.
   if (stops.length === 1 && straightKm > 0) stops.push({ cell: cells[0], point: end });
 
   const points = [stops[0].point];
@@ -128,7 +117,7 @@ export function buildHexRoute(start, end, maxStops) {
     points.push(...greatCircle(stops[i - 1].point, stops[i].point));
     stopAt.push(points.length - 1);
   }
-  const route = finishRoute({ mode: "hex", res, stops, points, straightKm });
+  const route = finishRoute({ grid, mode: "hex", res, stops, points, straightKm });
   stops.forEach((stop, i) => { stop.trackKm = route.cumKm[stopAt[i]]; });
   return route;
 }
@@ -139,9 +128,9 @@ export function buildHexRoute(start, end, maxStops) {
 
 // A route that was travelled rather than planned: `entries` are the places
 // a live session stopped at, each { point: [lat, lng], res } with the
-// hexagon size in use at the time.
-export function buildPathRoute(entries) {
-  const stops = entries.map(({ point, res }) => ({ cell: h3.latLngToCell(point[0], point[1], res), point }));
+// cell size in use at the time.
+export function buildPathRoute(grid, entries) {
+  const stops = entries.map(({ point, res }) => ({ cell: grid.cellAt(point[0], point[1], res), point }));
   const points = [stops[0].point];
   const stopAt = [0];
   for (let i = 1; i < stops.length; i++) {
@@ -149,7 +138,7 @@ export function buildPathRoute(entries) {
     stopAt.push(points.length - 1);
   }
   const straightKm = haversineKm(stops[0].point, stops[stops.length - 1].point);
-  const route = finishRoute({ mode: "path", res: entries[entries.length - 1].res, stops, points, straightKm });
+  const route = finishRoute({ grid, mode: "path", res: entries[entries.length - 1].res, stops, points, straightKm });
   stops.forEach((stop, i) => { stop.trackKm = route.cumKm[stopAt[i]]; });
   return route;
 }
@@ -176,7 +165,7 @@ async function fetchRoad(start, end, signal) {
 async function requestRoad(start, end, signal) {
   const straightKm = haversineKm(start, end);
   // Full geometry for a very long trip is megabytes of points we'd only
-  // throw away again at the hexagon size such trips use.
+  // throw away again at the cell size such trips use.
   const overview = straightKm > 800 ? "simplified" : "full";
   const coords = `${start[1].toFixed(6)},${start[0].toFixed(6)};${end[1].toFixed(6)},${end[0].toFixed(6)}`;
   const timeout = new AbortController();
@@ -211,12 +200,12 @@ async function requestRoad(start, end, signal) {
   return line.map(([lng, lat]) => [lat, lng]);
 }
 
-// Stretches of the track inside one hexagon, in travel order.
-function cellRuns(points, cumKm, res) {
-  const stepKm = h3.getHexagonEdgeLengthAvg(res, "km") / 3;
+// Stretches of the track inside one cell, in travel order.
+function cellRuns(grid, points, cumKm, res) {
+  const stepKm = grid.spacingKm(res) / 5;
   const runs = [];
   const visit = (lat, lng, km) => {
-    const cell = h3.latLngToCell(lat, wrapLng(lng), res);
+    const cell = grid.cellAt(lat, wrapLng(lng), res);
     const last = runs[runs.length - 1];
     if (last && last.cell === cell) last.to = km;
     else runs.push({ cell, from: km, to: km });
@@ -237,8 +226,8 @@ function cellRuns(points, cumKm, res) {
   visit(lastPoint[0], lastPoint[1], cumKm[cumKm.length - 1]);
 
   // A road that grazes a corner, or runs along an edge, flickers between
-  // hexagons. Drop those slivers and rejoin what's left.
-  const minKm = 0.12 * hexSpacingKm(res);
+  // cells. Drop those slivers and rejoin what's left.
+  const minKm = 0.12 * grid.spacingKm(res);
   const merged = [];
   runs.forEach((run, i) => {
     const sliver = i > 0 && i < runs.length - 1 && run.to - run.from < minKm;
@@ -250,7 +239,7 @@ function cellRuns(points, cumKm, res) {
   return merged;
 }
 
-export async function buildRoadRoute(start, end, maxStops, signal) {
+export async function buildRoadRoute(grid, start, end, maxStops, signal) {
   const road = await fetchRoad(start, end, signal);
   const straightKm = haversineKm(start, end);
   // OSRM always snaps to the nearest road, even one an ocean away. A trip
@@ -261,7 +250,7 @@ export async function buildRoadRoute(start, end, maxStops, signal) {
     const which = snapKm[0] >= snapKm[1] ? "start" : "end";
     throw new RoutingError(`the ${which} is ${Math.round(Math.max(...snapKm)).toLocaleString()} km from the nearest road`);
   }
-  // Thin the geometry to a few thousand points; plenty for hexagons that
+  // Thin the geometry to a few thousand points; plenty for cells that
   // are never smaller than a 75th of the trip.
   const minGapKm = Math.max(0.0005, straightKm / 3000);
   const points = [start];
@@ -272,15 +261,15 @@ export async function buildRoadRoute(start, end, maxStops, signal) {
     const gap = haversineKm(previous, unwrapped);
     if (gap > minGapKm || (i === line.length - 1 && gap > 0.0005)) points.push(unwrapped);
   });
-  if (points.length < 2) return buildHexRoute(start, end, maxStops);
+  if (points.length < 2) return buildWalkRoute(grid, start, end, maxStops);
 
-  const draft = finishRoute({ mode: "road", res: 0, stops: [], points, straightKm });
-  let res = 15;
-  while (res > 0 && draft.distanceKm / hexSpacingKm(res) > maxStops * 1.5) res--;
-  let runs = cellRuns(points, draft.cumKm, res);
+  const draft = finishRoute({ grid, mode: "road", res: 0, stops: [], points, straightKm });
+  let res = grid.maxRes;
+  while (res > 0 && draft.distanceKm / grid.spacingKm(res) > maxStops * 1.5) res--;
+  let runs = cellRuns(grid, points, draft.cumKm, res);
   while (runs.length > maxStops && res > 0) {
     res--;
-    runs = cellRuns(points, draft.cumKm, res);
+    runs = cellRuns(grid, points, draft.cumKm, res);
   }
 
   const stops = runs.map((run, i) => {
@@ -292,7 +281,7 @@ export async function buildRoadRoute(start, end, maxStops, signal) {
   });
   if (stops.length === 1) stops.push({ cell: stops[0].cell, point: end, trackKm: draft.distanceKm });
 
-  const route = finishRoute({ mode: "road", res, stops, points, straightKm });
+  const route = finishRoute({ grid, mode: "road", res, stops, points, straightKm });
   route.snapKm = snapKm;
   return route;
 }
@@ -309,7 +298,7 @@ function clampLat(lat) {
 // Adds what the map and the playhead need: a continuous track (longitudes
 // unwrapped so nothing jumps at the antimeridian) and the running distance
 // along it in km.
-function finishRoute({ mode, res, stops, points, straightKm }) {
+function finishRoute({ grid, mode, res, stops, points, straightKm }) {
   const track = [];
   const cumKm = [0];
   points.forEach((point, i) => {
@@ -317,7 +306,7 @@ function finishRoute({ mode, res, stops, points, straightKm }) {
     track.push([lng, clampLat(point[0])]);
     if (i > 0) cumKm.push(cumKm[i - 1] + haversineKm(points[i - 1], point));
   });
-  return { mode, res, stops, track, cumKm, straightKm, distanceKm: cumKm[cumKm.length - 1] };
+  return { grid, mode, res, stops, track, cumKm, straightKm, distanceKm: cumKm[cumKm.length - 1] };
 }
 
 function segmentAt(route, km) {
@@ -352,17 +341,17 @@ export function trackUpTo(route, km) {
   return [...route.track.slice(0, lo + 1), [at[1], at[0]]];
 }
 
-// Hexagon outlines as GeoJSON, positioned on the same copy of the world as
+// Cell outlines as GeoJSON, positioned on the same copy of the world as
 // the track so they line up across the antimeridian.
 export function stopsToGeoJSON(route) {
   const features = route.stops.map((stop, i) => {
-    const centre = h3.cellToLatLng(stop.cell);
+    const centre = route.grid.centre(stop.cell);
     const anchor = pointAt(route, stop.trackKm)[1];
     const centreLng = unwrapLng(centre[1], anchor);
-    let ring = h3.cellToBoundary(stop.cell, true).map(([lng, lat]) => [unwrapLng(lng, centreLng), clampLat(lat)]);
+    let ring = route.grid.boundary(stop.cell).map(([lng, lat]) => [unwrapLng(lng, centreLng), clampLat(lat)]);
     const lngs = ring.map((vertex) => vertex[0]);
     if (Math.max(...lngs) - Math.min(...lngs) > 180) {
-      // The hexagon sits on a pole. On this map that is everything beyond
+      // The cell sits on a pole. On this map that is everything beyond
       // its edge, right across the top (or bottom) of the world.
       const edge = clampLat(centre[0] > 0 ? 90 : -90);
       const sorted = ring.slice(0, -1).sort((p, q) => p[0] - q[0]);
