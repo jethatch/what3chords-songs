@@ -15,7 +15,7 @@ By writing over and onto an existing world, irrespective of what is there, what3
 Further reading:
 
 - Jim Thatcher's chapter in [*How to Run a City Like Amazon, and Other Fables*](https://meatspacepress.com/how-to-run-a-company-like-amazon-and-other-fables/) (Meatspace Press, 2019), free to read.
-- Thatcher, O'Sullivan and Mahmoudi, "[Data colonialism through accumulation by dispossession](https://doi.org/10.1177/0263775816633195)" (*Environment and Planning D*, 2016).
+- Thatcher, O'Sullivan and Mahmoudi, "[Data colonialism through accumulation by dispossession](https://doi.org/10.1177/0263775816633195)" (*Environment and Planning D: Society and Space*, 2016).
 - Donna Haraway, "[Situated Knowledges](https://doi.org/10.2307/3178066)" (*Feminist Studies*, 1988), for the view from nowhere.
 
 ## What it does

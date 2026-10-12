@@ -1574,8 +1574,15 @@ function bindControls() {
   $("about-open").addEventListener("click", () => $("about").showModal());
   $("what-open").addEventListener("click", () => $("what").showModal());
   for (const id of ["about", "what", "share-dialog"]) {
+    // A click on the backdrop closes the dialog. The backdrop reports the
+    // dialog as its target, and so does the dialog's own padding, so go by
+    // where the click landed.
     $(id).addEventListener("click", (event) => {
-      if (event.target === $(id)) $(id).close();
+      if (event.target !== $(id)) return;
+      const box = $(id).getBoundingClientRect();
+      const inside = event.clientX >= box.left && event.clientX <= box.right &&
+        event.clientY >= box.top && event.clientY <= box.bottom;
+      if (!inside) $(id).close();
     });
   }
 
