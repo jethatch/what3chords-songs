@@ -78,9 +78,15 @@ For a route stop, the point used is the pin itself (first and last stop of a pla
 The A5 option applies the same recipe to a different grid, as a second, unofficial address system. Nothing about either grid makes its chords the right ones for a place, which is the point of having two.
 
 1. Find the resolution-23 A5 cell (about 0.5 m²) containing the point. A5 has no level at one square metre; 22 is about 1.9 m².
-2. Take which of the 60 fifths-of-a-face the cell is in and its 22 base-4 digits along A5's space-filling curve. Deal the digits out every third one first (the same construction as the original's shuffle of H3's base-7 digits), and read the result as one number.
-3. Multiply by four. There are about a quarter as many of these numbers as there are chord triples, and without this every first chord would come from the C family. (H3 addresses have that quirk: their first chords are all C, C# or Db chords.)
+2. Take which of the 60 fifths-of-a-face the cell is in and its 22 base-4 digits along A5's space-filling curve. Deal the first 21 digits out every third one first, leaving the finest last (the same construction as the original's shuffle of H3's base-7 digits), and read the result as one number.
+3. Multiply by four. There are less than a quarter as many of these numbers as there are chord triples, and without this every first chord would be a C, C# or D chord. (H3 addresses have that quirk: their first chords are all C, C# or Db chords.) Even so, the numbers stop short of the end of the table, so a B chord never comes first.
 4. Write the number in base 167,011, as before.
+
+One difference you can hear: on H3 a place shares its first chord with the region around it (of two places a kilometre apart, about one pair in twenty has different first chords). On A5 the first chord is far more local (about half of such pairs differ).
+
+As a check that nothing has shifted, 42.36010, -71.05890 in Boston is `Cmmaj7/G | C#sus4/F | F#augmaj7/B` on H3 and `Dbmaj#11/C | Esus4/B | Dsus2#5/E` on A5.
+
+Within about ten metres of either pole the A5 library is not repeatable, so points there are treated as lying just short of the pole.
 
 The scheme depends on how `a5-js` numbers its cells. The library is pinned at 0.10.1 and is not yet at version 1; if a later version numbered cells differently, upgrading would change every place's A5 chords.
 

@@ -202,7 +202,7 @@ async function requestRoad(start, end, signal) {
 
 // Stretches of the track inside one cell, in travel order.
 function cellRuns(grid, points, cumKm, res) {
-  const stepKm = grid.spacingKm(res) / 5;
+  const stepKm = grid.stepKm(res);
   const runs = [];
   const visit = (lat, lng, km) => {
     const cell = grid.cellAt(lat, wrapLng(lng), res);

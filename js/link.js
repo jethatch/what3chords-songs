@@ -124,7 +124,7 @@ export function encodeState(state, includePath) {
 export function decodeHash(hash) {
   const params = new URLSearchParams(hash.replace(/^#/, ""));
   const found = {};
-  if (Object.hasOwn(GRIDS, params.get("gr") || "")) found.grid = params.get("gr");
+  if (Object.prototype.hasOwnProperty.call(GRIDS, params.get("gr") || "")) found.grid = params.get("gr");
   const grid = GRIDS[found.grid || "h3"];
   const path = params.get("lv") ? decodePath(params.get("lv"), params.get("lr"), grid.maxRes) : null;
   if (path) {

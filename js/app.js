@@ -30,8 +30,8 @@ const LENGTHS = {
 };
 // {cell}, {cells} and {walk} are filled in for the grid in use.
 const MODES = {
-  hex: { name: "{walk}", explain: "Greedy local routing: from each {cell}, step to whichever neighbour is nearest the destination. Worked out in your browser, and it ignores roads, rivers and oceans." },
-  road: { name: "Follow roads", explain: "Asks the public OSRM server for a driving route and plays the {cells} it passes through. If no road connects the two places, or either pin is far from any road, you get the {walk} instead." },
+  hex: { explain: "Greedy local routing: from each {cell}, step to whichever neighbour is nearest the destination. Worked out in your browser, and it ignores roads, rivers and oceans." },
+  road: { explain: "Asks the public OSRM server for a driving route and plays the {cells} it passes through. If no road connects the two places, or either pin is far from any road, you get the {walk} instead." },
 };
 const PER_STOP_EXPLAIN = {
   3: "Every stop plays all three of its chords, one bar each: the full what3chords address of each place you pass. Three bars per stop.",
@@ -991,7 +991,7 @@ function openSpot(lat, lng, autoplay) {
   const content = document.createElement("div");
   content.className = "spot";
   content.innerHTML = `
-    <p class="spot-title">${formatLatLng(lat, lng)}</p>
+    <p class="spot-title">${formatLatLng(lat, lng)} · ${grid().cell} address</p>
     <div class="spot-chords">${chords.map((chord) => chordCard(chord)).join("")}</div>
     <div class="spot-actions">
       <button type="button" class="button" data-action="hear">▶ Hear it</button>

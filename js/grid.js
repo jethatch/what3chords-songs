@@ -15,18 +15,27 @@
 const H3_SCRAMBLE = [0, 5, 10, 1, 6, 11, 2, 7, 12, 3, 8, 13, 4, 9, 14];
 const H3_ADDRESS_RES = 15;
 
-// A5 gets the same deal for its 22 base-4 digits: every third digit first.
+// A5 gets the same deal for its 22 base-4 digits. 22 doesn't divide by
+// three, so the first 21 are dealt out and the finest stays last, where the
+// original's finest digit also ends up.
 const A5_ADDRESS_RES = 23;
 const A5_DIGITS = A5_ADDRESS_RES - 1;
 const A5_SCRAMBLE = new Array(A5_DIGITS);
 let position = 0;
 for (let third = 0; third < 3; third++) {
-  for (let i = third; i < A5_DIGITS; i += 3) A5_SCRAMBLE[i] = position++;
+  for (let i = third; i < A5_DIGITS - 1; i += 3) A5_SCRAMBLE[i] = position++;
 }
-// 60 x 4^22 pentagons reach only the first quarter of the 167,011^3 chord
-// triples, which would leave every first chord in the C family. Multiplying
-// by four spreads the addresses over nearly the whole code book.
+A5_SCRAMBLE[A5_DIGITS - 1] = A5_DIGITS - 1;
+// 60 x 4^22 pentagons reach less than a quarter of the 167,011^3 chord
+// triples, which would leave every first chord a C, C# or D chord.
+// Multiplying by four spreads the addresses over most of the code book
+// (every root but B can come first).
 const A5_SPREAD = 4;
+// Within a few metres of a pole the A5 library's answer depends on what it
+// was last asked, so the same point could get different chords. Stopping
+// just short keeps it repeatable.
+const A5_MAX_LAT = 89.9999;
+const nearPole = (lat) => Math.max(-A5_MAX_LAT, Math.min(A5_MAX_LAT, lat));
 
 const h3Grid = {
   id: "h3",
@@ -45,6 +54,8 @@ const h3Grid = {
   neighbours: (cell) => h3.gridDisk(cell, 1).filter((other) => other !== cell),
   // Centre-to-centre distance between neighbouring cells.
   spacingKm: (res) => Math.sqrt(3) * h3.getHexagonEdgeLengthAvg(res, "km"),
+  // How finely to sample a road when collecting the cells it passes through.
+  stepKm: (res) => h3.getHexagonEdgeLengthAvg(res, "km") / 3,
   // Used only if a greedy walk gets stuck, which can happen where the grid
   // is distorted around one of its twelve pentagons.
   lineTo(from, to) {
@@ -83,7 +94,7 @@ const a5Grid = {
   liveRes: [17, 15, 14, 13],
   explain: "A second address system, made for this page, on the A5 grid of equal-area pentagons (about 0.5 m² each at the level used). The same place gets three different chords, and neither set is the right one.",
 
-  cellAt: (lat, lng, res) => A5.lonLatToCell([lng, lat], res),
+  cellAt: (lat, lng, res) => A5.lonLatToCell([lng, nearPole(lat)], res),
   centre(cell) {
     const [lng, lat] = A5.cellToLonLat(cell);
     return [lat, lng];
@@ -91,6 +102,7 @@ const a5Grid = {
   boundary: (cell) => A5.cellToBoundary(cell, { closedRing: true }),
   neighbours: (cell) => [...A5.uncompact(A5.gridDisk(cell, 1), A5.getResolution(cell))].filter((other) => other !== cell),
   spacingKm: (res) => Math.sqrt(A5.cellArea(res)) / 1000,
+  stepKm: (res) => Math.sqrt(A5.cellArea(res)) / 5000,
   lineTo: (from, to) => [to],
 
   // An A5 cell ID is: which of 60 fifths-of-a-face the cell is in, then two
@@ -98,7 +110,7 @@ const a5Grid = {
   // 1 bit marking where the ID ends. Strip the marker, shuffle the curve
   // digits, and read the result as one number.
   number(lat, lng) {
-    const id = A5.lonLatToCell([lng, lat], A5_ADDRESS_RES);
+    const id = A5.lonLatToCell([lng, nearPole(lat)], A5_ADDRESS_RES);
     const marker = id & -id;
     const payload = id / (marker << 1n);
     const fifth = Number(payload >> BigInt(2 * A5_DIGITS));
