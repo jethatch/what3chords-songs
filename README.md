@@ -4,6 +4,8 @@ Every square metre of Earth is three guitar chords. Pick two places and play the
 
 > **This is a recreation based on the original [what3chords](https://github.com/DOSull/what3chords)** by David O'Sullivan, Luke Bergmann, Jim Thatcher and Nick Lally. The idea, the place-to-chords scheme, the chord table and the guitar samples come from that project. Licensing for this repository and the material it takes from the original is under discussion with the original authors; until that is settled, no licence is granted for reuse.
 
+> **Preview text.** Apart from the "What is this?" section, which Jim Thatcher supplied, this README and the page's "How it works" panel were written by Claude, Anthropic's AI model, while building this version. They are for preview only and the original authors have not yet reviewed them.
+
 ## What is this?
 
 what3chords gives every square metre of the Earth an address made of three guitar chords. It was made in July 2020 by David O'Sullivan, Luke Bergmann, Jim Thatcher and Nick Lally, and takes its name from a 1977 punk fanzine: "This is a chord. This is another. This is a third. Now form a band." This version, rebuilt in 2026, keeps the original scheme and adds journeys, a band and live sessions.
@@ -14,7 +16,7 @@ By writing over and onto an existing world, irrespective of what is there, what3
 
 Further reading:
 
-- Jim Thatcher's chapter in [*How to Run a City Like Amazon, and Other Fables*](https://meatspacepress.com/how-to-run-a-company-like-amazon-and-other-fables/) (Meatspace Press, 2019), free to read.
+- Jim Thatcher, "Address.Error.503", in [*How to Run a City Like Amazon, and Other Fables*](https://meatspacepress.com/how-to-run-a-company-like-amazon-and-other-fables/) (Meatspace Press, 2019), free to read.
 - Thatcher, O'Sullivan and Mahmoudi, "[Data colonialism through accumulation by dispossession](https://doi.org/10.1177/0263775816633195)" (*Environment and Planning D: Society and Space*, 2016).
 - Donna Haraway, "[Situated Knowledges](https://doi.org/10.2307/3178066)" (*Feminist Studies*, 1988), for the view from nowhere.
 
