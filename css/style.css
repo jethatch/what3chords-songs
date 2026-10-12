@@ -1048,6 +1048,8 @@ dialog h2 { font-size: 22px; text-transform: none; letter-spacing: 0; margin-bot
 dialog h3 { font: 700 15px var(--font-ui); margin: 16px 0 4px; }
 dialog p, dialog li { font-size: 14.5px; }
 dialog ul { margin: 8px 0 0; padding-left: 20px; display: grid; gap: 6px; }
+dialog p + p { margin-top: 10px; }
+dialog cite { font-style: italic; }
 dialog .fine { margin-top: 8px; }
 .dialog-close { position: absolute; top: 14px; right: 14px; font-size: 20px; }
 dialog.small { width: min(420px, calc(100vw - 32px)); }

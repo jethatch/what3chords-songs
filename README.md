@@ -4,7 +4,23 @@ Every square metre of Earth is three guitar chords. Pick two places and play the
 
 > **This is a recreation based on the original [what3chords](https://github.com/DOSull/what3chords)** by David O'Sullivan, Luke Bergmann, Jim Thatcher and Nick Lally. The idea, the place-to-chords scheme, the chord table and the guitar samples come from that project. Licensing for this repository and the material it takes from the original is under discussion with the original authors; until that is settled, no licence is granted for reuse.
 
-"This is a chord. This is another. This is a third. Now form a band." The original lets you click the map and hear that spot's three chords. This version keeps that, and adds journeys:
+## What is this?
+
+what3chords gives every square metre of the Earth an address made of three guitar chords. It was made in July 2020 by David O'Sullivan, Luke Bergmann, Jim Thatcher and Nick Lally, and takes its name from a 1977 punk fanzine: "This is a chord. This is another. This is a third. Now form a band." This version, rebuilt in 2026, keeps the original scheme and adds journeys, a band and live sessions.
+
+It is a satire of [what3words](https://what3words.com/), the company that has divided the world into three-metre squares and given each one a three-word address from its own proprietary list. The joke is that the chords are as arbitrary as the words: nothing about a place makes these chords representative of the place to which they are assigned and, in fact, many of these places have musical traditions that would not rely on this system of music!
+
+By writing over and onto an existing world, irrespective of what is there, what3words follows the long history of cartography's entanglement with colonial projects. Here, a tech-capitalist firm has taken the role traditionally held by the state and presents a 'view from nowhere' that seeks to naturalize itself while eliding its own self-interested perspective. what3chords does the same thing on purpose, with one chord table, so that the move is easier to see.
+
+Further reading:
+
+- Jim Thatcher's chapter in [*How to Run a City Like Amazon, and Other Fables*](https://meatspacepress.com/how-to-run-a-company-like-amazon-and-other-fables/) (Meatspace Press, 2019), free to read.
+- Thatcher, O'Sullivan and Mahmoudi, "[Data colonialism through accumulation by dispossession](https://doi.org/10.1177/0263775816633195)" (*Environment and Planning D*, 2016).
+- Donna Haraway, "[Situated Knowledges](https://doi.org/10.2307/3178066)" (*Feminist Studies*, 1988), for the view from nowhere.
+
+## What it does
+
+The original lets you click the map and hear that spot's three chords. This version keeps that, and adds journeys:
 
 - **Start and end by name.** Type "Boston, MA" and a pin drops there. Place search uses [Nominatim](https://nominatim.org/) with [Photon](https://photon.komoot.io/) as a fallback; neither needs a key. You can also type `lat, lng`, click the map, or drag the pins.
 - **A route made of hexagons.** *Hex walk* is greedy local routing over the [H3](https://h3geo.org/) grid, computed in the browser: from each hexagon, step to the neighbour nearest the destination. *Follow roads* asks the public [OSRM](https://project-osrm.org/) demo server for a driving route and collects the hexagons along it, falling back to the hex walk when there is no road or no server. The hexagon size is chosen so the trip has a sensible number of stops (short, medium or long).

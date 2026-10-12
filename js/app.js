@@ -1572,7 +1572,8 @@ function bindControls() {
   });
   $("theme-toggle").addEventListener("click", () => setTheme(theme === "dark" ? "light" : "dark"));
   $("about-open").addEventListener("click", () => $("about").showModal());
-  for (const id of ["about", "share-dialog"]) {
+  $("what-open").addEventListener("click", () => $("what").showModal());
+  for (const id of ["about", "what", "share-dialog"]) {
     $(id).addEventListener("click", (event) => {
       if (event.target === $(id)) $(id).close();
     });
