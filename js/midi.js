@@ -62,7 +62,7 @@ export class MidiScribe {
   // ---- time ---------------------------------------------------------------
 
   tick(time) {
-    return this.base + Math.round((this.transport.getTicksAtTime(time) * PPQ) / this.transport.PPQ);
+    return this.base + Math.max(0, Math.round((this.transport.getTicksAtTime(time) * PPQ) / this.transport.PPQ));
   }
 
   // A length in seconds, in ticks at the tempo of the moment.
@@ -167,11 +167,16 @@ export class MidiScribe {
     this.cut(GUITAR, this.tick(time));
   }
 
-  // The band was hushed (a pause): nothing rings on past this moment.
+  // The band was hushed (a pause, or the end): nothing rings on past this
+  // moment, and the notes it had been handed a moment ahead of time, which
+  // were never heard, come out again.
   silence() {
     const at = this.tick(this.transport.immediate());
-    this.cut(GUITAR, at);
-    this.cut(BASS, at);
+    for (const part of [GUITAR, BASS]) {
+      this.notes[part] = this.notes[part].filter((note) => note.at < at);
+      for (const note of this.notes[part]) note.until = Math.min(note.until, at);
+      for (const [pitch, note] of this.sounding[part]) if (note.at >= at) this.sounding[part].delete(pitch);
+    }
   }
 
   // ---- the file -----------------------------------------------------------

@@ -1298,7 +1298,8 @@ async function downloadSong() {
   }
 }
 
-// The song's notes as a MIDI file, for a music program to open.
+// The song's notes as a MIDI file, for a music program to open. The file
+// names the link it came from, unless that link would hold a travelled route.
 function downloadMidi() {
   if (!state.route || live) return;
   const title = songTitle();
@@ -1311,7 +1312,7 @@ function downloadMidi() {
       drumStyle: state.drumStyle,
       bass: state.bass,
       guitar: state.guitar,
-    }, title.replace(/→/g, "to"), `Made with what3chords songs. ${location.href}`);
+    }, title.replace(/→/g, "to"), state.path ? "Made with what3chords songs." : `Made with what3chords songs. ${location.href}`);
     const name = `${fileStem(title)}.mid`;
     saveBlob(blob, name);
     toast(`Saved ${name} (${formatSize(blob.size)}).`);
