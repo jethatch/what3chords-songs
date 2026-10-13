@@ -366,7 +366,11 @@ input::placeholder { color: var(--muted); opacity: 0.7; }
   padding: 0;
   min-width: 0;
 }
-.choice legend { padding: 0; margin-bottom: 5px; }
+/* Safari gives a legend a layout of its own: a fieldset in a flex column
+   grows by the height of its legend, and a grid set on the fieldset puts
+   its rows below the box. A floated legend is an ordinary block again. */
+.choice legend { float: left; width: 100%; padding: 0; margin-bottom: 5px; }
+.choice legend + * { clear: both; }
 
 .segmented {
   display: flex;
@@ -631,13 +635,12 @@ input[type="range"] {
 .switch-note { font-size: 13px; color: var(--muted); }
 select:disabled { opacity: 0.45; cursor: default; }
 
-.mixer {
+.mixer-rows {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   column-gap: 12px;
 }
-.mixer legend { grid-column: 1 / -1; }
 .mixer label { font-size: 14px; font-weight: 600; }
 .mixer input[type="range"] { height: 30px; }
 
