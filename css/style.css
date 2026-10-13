@@ -1008,6 +1008,26 @@ select:disabled { opacity: 0.45; cursor: default; }
   font-size: 13px;
 }
 
+/* In place of the map, in a browser that can't draw one. */
+#map-missing {
+  position: absolute;
+  top: 56px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(420px, calc(100% - 32px));
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  font-size: 14.5px;
+}
+#map-missing[hidden] { display: none; }
+#map-missing p + p { margin-top: 8px; }
+#map-missing .fine { color: var(--muted); font-size: 13px; }
+.no-map #map,
+.no-map .with-map,
+.no-map .follow { display: none; }
+
 #toast {
   position: absolute;
   top: 12px;
@@ -1108,6 +1128,8 @@ dialog.small input { margin-top: 12px; font: 500 13px var(--font-mono); }
   .masthead { order: 1; margin-top: 14px; }
   #trip { order: 2; margin-top: 12px; }
   #stage { order: 3; height: 58vh; min-height: 340px; margin-top: 12px; }
+  .no-map #stage { height: auto; min-height: 0; }
+  .no-map #map-missing { position: static; transform: none; width: auto; margin: 0 12px; }
   #band { order: 4; margin-top: 12px; }
   .credits { order: 5; margin-top: 12px; margin-bottom: 14px; }
   #deck {

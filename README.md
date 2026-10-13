@@ -45,6 +45,8 @@ python3 -m http.server 8766
 
 Then open <http://localhost:8766>. (Opening `index.html` straight from disk won't work; browsers block module scripts and `fetch` on `file://`.)
 
+The map needs WebGL. In a browser that can't provide it (graphics acceleration switched off, some remote desktops and virtual machines), the page runs without the map and says why. Add `?nomap` to the address to see that state.
+
 ## Put it on GitHub Pages
 
 Push this folder to a repository, then in **Settings → Pages** choose **Deploy from a branch**, the `main` branch and the `/ (root)` folder. All paths are relative, so it works at `https://<user>.github.io/<repo>/`.

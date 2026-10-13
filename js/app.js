@@ -93,6 +93,7 @@ const state = {
 const band = new Band();
 const player = new Player(band);
 let map;
+let mapParts; // where pins and popups come from: the map library, or nothing()
 let theme = document.documentElement.dataset.theme;
 let routeRequest = 0;
 let routeAbort = null;
@@ -219,18 +220,47 @@ function clampToMap(lat) {
   return Math.max(-85, Math.min(85, lat));
 }
 
+// Stands in for the map, and for the pins and popups that go on it, when
+// the browser can't draw one: any property of it is itself, any call
+// returns itself, and read as a number it is 0. So `map.flyTo(...)` and
+// `new mapParts.Marker(...).setLngLat(...).addTo(map)` simply do nothing.
+function nothing() {
+  const self = new Proxy(function () {}, {
+    get: (target, key) => (key === Symbol.toPrimitive ? () => 0 : key === "then" ? undefined : self),
+    set: () => true,
+    apply: () => self,
+    construct: () => self,
+  });
+  return self;
+}
+
 function initMap() {
   const only = state.start && state.end ? null : state.start || state.end;
   const view = only
     ? { center: [only.lng, clampToMap(only.lat)], zoom: 10 }
     : { center: [-40, 30], zoom: 1.6 };
-  map = new maplibregl.Map({
-    container: "map",
-    style: BASEMAPS[theme],
-    ...view,
-    maxZoom: 22,
-    attributionControl: { compact: true },
-  });
+  try {
+    // ?nomap shows the page as it is for a browser that can't draw the map.
+    if (new URLSearchParams(location.search).has("nomap")) throw new Error("Map switched off by ?nomap");
+    map = new maplibregl.Map({
+      container: "map",
+      style: BASEMAPS[theme],
+      ...view,
+      maxZoom: 22,
+      attributionControl: { compact: true },
+    });
+    mapParts = maplibregl;
+  } catch (error) {
+    // The map needs WebGL, which a browser may have switched off or may
+    // refuse to use with the machine's graphics driver. Trips, sound,
+    // sharing and downloads don't need the map, so carry on without it.
+    console.warn("No map:", error.message);
+    map = mapParts = nothing();
+    $("map").replaceChildren();
+    document.body.classList.add("no-map");
+    $("map-missing").hidden = false;
+    return;
+  }
   map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
   const locate = new maplibregl.GeolocateControl({ fitBoundsOptions: { maxZoom: 14 } });
   locate.on("geolocate", (fix) => {
@@ -331,7 +361,7 @@ function setMarker(which) {
     return;
   }
   if (!markers[which]) {
-    const marker = new maplibregl.Marker({
+    const marker = new mapParts.Marker({
       element: pinElement(which === "start" ? "A" : "B", which),
       anchor: "bottom",
       draggable: true,
@@ -782,7 +812,7 @@ let shownKm = null; // how far the travelled line has been drawn
 let shownSlot = null;
 
 function placePlayhead(lat, lng, visible) {
-  if (!markers.playhead) markers.playhead = new maplibregl.Marker({ element: playheadElement(), anchor: "center" });
+  if (!markers.playhead) markers.playhead = new mapParts.Marker({ element: playheadElement(), anchor: "center" });
   markers.playhead.setLngLat([lng, clampToMap(lat)]).addTo(map);
   const el = markers.playhead.getElement();
   el.style.visibility = visible ? "" : "hidden";
@@ -1005,7 +1035,7 @@ function openSpot(lat, lng, autoplay) {
     if (action === "hear") playSpot();
     else if (action) setPlace(action, { lat, lng, label: formatLatLng(lat, lng) }, { move: false });
   });
-  const popup = new maplibregl.Popup({ offset: 10, focusAfterOpen: false })
+  const popup = new mapParts.Popup({ offset: 10, focusAfterOpen: false })
     .setLngLat([lng, lat])
     .setDOMContent(content)
     .addTo(map);

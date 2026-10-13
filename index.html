@@ -82,7 +82,7 @@
               <div class="candidates" id="end-candidates"></div>
             </form>
           </div>
-          <p class="hint">A place name, an address, or <code>lat, lng</code>. You can also click the map to hear a spot and pin it, or drag the pins. <button type="button" class="link" id="example">Try Boston → New York</button></p>
+          <p class="hint">A place name, an address, or <code>lat, lng</code>. <span class="with-map">You can also click the map to hear a spot and pin it, or drag the pins.</span> <button type="button" class="link" id="example">Try Boston → New York</button></p>
 
           <details class="more" id="more-route">
             <summary><span class="more-title">Route options</span><span class="more-now" id="route-now"></span></summary>
@@ -213,6 +213,11 @@
 
     <main id="stage">
       <div id="map" aria-label="Map. Click anywhere to hear that spot’s three chords."></div>
+      <div id="map-missing" hidden>
+        <p><strong>No map here.</strong> This browser can’t draw it: the map needs graphics acceleration (WebGL), which is switched off or unavailable.</p>
+        <p>Everything else works. Enter a start and an end, and the song plays, shares and downloads as usual.</p>
+        <p class="fine">To see the map, turn on hardware acceleration in the browser’s settings, or try another browser or device.</p>
+      </div>
       <div id="toast" role="alert" hidden></div>
       <div id="arrival" hidden>
         <div class="arrival-box">
@@ -349,7 +354,7 @@
         } catch (e) { tried = true; }
         if (tried) return fail();
         // Keep this list in step with the files in js/.
-        var scripts = ["app", "audio", "band", "chords", "diagram", "geocode", "grid", "link", "live", "patterns", "routing"];
+        var scripts = ["app", "audio", "band", "chords", "diagram", "geocode", "grid", "link", "live", "midi", "patterns", "routing"];
         Promise.all(scripts.map(function (name) {
           return fetch("./js/" + name + ".js", { cache: "reload" }).catch(function () {});
         })).then(function () { location.reload(); });
