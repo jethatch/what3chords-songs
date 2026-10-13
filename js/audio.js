@@ -1,5 +1,6 @@
-// Playback: a scheduler that drives a Band bar by bar, plus two ways to get
-// a song out as a file (render it offline, or record it as it plays).
+// Playback: a scheduler that drives a Band bar by bar, plus the ways to get
+// a song out as a file (render it offline as audio, write it out as MIDI,
+// or record it as it plays).
 //
 // Everything runs off one repeating sixteenth-note tick on a Tone.js
 // transport. At the top of each bar the player latches the current time
@@ -7,6 +8,7 @@
 // mid-song takes effect on the next bar line; tempo changes apply at once.
 
 import { Band, findGuitar, loadSamples } from "./band.js";
+import { MidiScribe } from "./midi.js";
 import {
   PATTERNS, slotsPerBar, drumGroove, guitarSlots, drumSlots, bassSlots,
 } from "./patterns.js";
@@ -51,7 +53,15 @@ export class Player {
     this.song = null;
     this.untilBar = Infinity;
     this.marks = [];
+    // A MidiScribe (midi.js) to write down what the band is asked to play.
+    this.scribe = null;
     this.onEnd = () => {};
+  }
+
+  // Everything the band plays goes to the scribe as well, if there is one.
+  send(what, ...args) {
+    this.band[what](...args);
+    if (this.scribe) this.scribe[what](...args);
   }
 
   setTempo(bpm) {
@@ -80,6 +90,7 @@ export class Player {
     this.endingSlots = 0;
     this.slotTicks = this.transport.PPQ / 4;
     this.transport.bpm.value = this.bpm;
+    if (this.scribe) this.scribe.restart();
     this.transport.scheduleRepeat((time) => this.tick(time), "16n", 0);
   }
 
@@ -87,6 +98,7 @@ export class Player {
     if (this.state !== "playing") return;
     this.transport.pause();
     this.band.silence();
+    if (this.scribe) this.scribe.silence();
     this.state = "paused";
   }
 
@@ -98,6 +110,8 @@ export class Player {
   }
 
   stop() {
+    // While the transport still knows where it is.
+    if (this.scribe && this.state !== "stopped") this.scribe.silence();
     this.transport.stop();
     this.transport.cancel(0);
     this.band.silence();
@@ -134,7 +148,7 @@ export class Player {
     if (this.slot === 0) {
       // A chunk of an offline render plays up to its last bar and no further.
       if (this.bar >= this.untilBar) return;
-      this.band.releaseGuitar(time);
+      this.send("releaseGuitar", time);
       if (this.atBarLine) {
         this.bar = this.atBarLine(this.bar);
         this.atBarLine = null;
@@ -153,18 +167,19 @@ export class Player {
         pattern: this.pattern,
       };
       this.pushMark(this.mark);
+      if (this.scribe) this.scribe.bar(time, this.signature, info);
     }
     const { steps, drums, bass, info } = this.mark;
     if (steps[this.slot]) this.playGuitar(steps[this.slot], time);
     if (drums) {
       for (const voice in drums) {
         const hit = drums[voice][this.slot];
-        if (hit) this.band.drum(voice, time, DRUM_LEVELS[hit] || 0.75);
+        if (hit) this.send("drum", voice, time, DRUM_LEVELS[hit] || 0.75);
       }
     }
     if (bass && bass[this.slot]) {
       const token = bass[this.slot];
-      this.band.bassNote(bassPitch(info.chord, token), time, this.ringSeconds(bass) + 0.05, token === "r" ? 0.6 : 0.9);
+      this.send("bassNote", bassPitch(info.chord, token), time, this.ringSeconds(bass) + 0.05, token === "r" ? 0.6 : 0.9);
     }
     if (++this.slot >= this.mark.slots) {
       this.slot = 0;
@@ -189,24 +204,23 @@ export class Player {
     const slotSeconds = 15 / this.bpm;
     const sustain = this.ringSeconds(this.mark.steps);
     const gap = Math.min(0.024, slotSeconds * 0.16);
-    const band = this.band;
 
     if (token === "B") {
-      band.pluck(notes[0], time, sustain + 0.4, 0.95);
+      this.send("pluck", notes[0], time, sustain + 0.4, 0.95);
     } else if (/[1-4]/.test(token)) {
-      band.pluck(notes[Math.max(0, notes.length - Number(token))], time, sustain + 0.4, 0.7);
+      this.send("pluck", notes[Math.max(0, notes.length - Number(token))], time, sustain + 0.4, 0.7);
     } else if (token === "x") {
-      band.strum(notes, time, 0.004, 0.035, 0.4);
+      this.send("strum", notes, time, 0.004, 0.035, 0.4);
     } else if (token === "c") {
-      band.strum(notes, time, gap * 0.5, 0.11, 0.95);
+      this.send("strum", notes, time, gap * 0.5, 0.11, 0.95);
     } else {
       const accent = token === "D" || token === "U";
       if (token === "D" || token === "d") {
-        band.strum(notes, time, gap, sustain + 0.12, accent ? 0.95 : 0.6);
+        this.send("strum", notes, time, gap, sustain + 0.12, accent ? 0.95 : 0.6);
       } else {
         // An up strum mostly catches the treble strings.
         const treble = notes.slice(-4).reverse();
-        band.strum(treble, time, gap * 0.8, sustain + 0.12, accent ? 0.8 : 0.5);
+        this.send("strum", treble, time, gap * 0.8, sustain + 0.12, accent ? 0.8 : 0.5);
       }
     }
   }
@@ -217,12 +231,12 @@ export class Player {
     const chord = this.song.ending;
     this.endingSlots = Math.max(1, Math.ceil(ENDING_SECONDS / slotSeconds));
     if (chord) {
-      this.band.strum(chord.midi, time, 0.035, ENDING_SECONDS, 0.95);
-      if (this.bass) this.band.bassNote(bassPitch(chord, "R"), time, ENDING_SECONDS, 0.9);
+      this.send("strum", chord.midi, time, 0.035, ENDING_SECONDS, 0.95);
+      if (this.bass) this.send("bassNote", bassPitch(chord, "R"), time, ENDING_SECONDS, 0.9);
     }
     if (this.drums) {
-      this.band.drum("k", time, 1);
-      this.band.drum("o", time, 0.9);
+      this.send("drum", "k", time, 1);
+      this.send("drum", "o", time, 0.9);
     }
     this.pushMark({
       bar: this.song.bars, start: now, slots: this.endingSlots,
@@ -368,6 +382,50 @@ export async function renderSong(song, settings, onProgress = () => {}) {
     await breathe();
   }
   return encodeWav(mix, RENDER_RATE);
+}
+
+// A band that makes no sound, and a clock that runs as fast as it is asked
+// to: enough for the player to go through a song with only a scribe
+// listening.
+const SILENT_BAND = {
+  strum() {}, pluck() {}, bassNote() {}, drum() {}, releaseGuitar() {}, silence() {},
+};
+
+class DryTransport {
+  constructor(bpm) {
+    this.PPQ = 192;
+    this.bpm = { value: bpm };
+    this.running = false;
+    this.repeat = null;
+  }
+  scheduleRepeat(callback) { this.repeat = callback; }
+  getTicksAtTime(time) { return (time * this.bpm.value * this.PPQ) / 60; }
+  immediate() { return 0; }
+  start() { this.running = true; }
+  stop() { this.running = false; }
+  cancel() { this.repeat = null; }
+}
+
+// Writes a whole song out as a MIDI file and returns it as a Blob. Nothing
+// is sounded, so this is quick however long the song is.
+// settings: { signature, pattern, bpm, drums, drumStyle, bass, guitar }
+export function songToMidi(song, settings, title, about) {
+  const transport = new DryTransport(settings.bpm);
+  const player = new Player(SILENT_BAND, transport, true);
+  player.signature = settings.signature;
+  player.pattern = settings.pattern;
+  player.bpm = settings.bpm;
+  player.drums = settings.drums;
+  player.drumStyle = settings.drumStyle;
+  player.bass = settings.bass;
+  player.scribe = new MidiScribe({ transport, guitar: () => settings.guitar, title, about });
+  player.begin(song, 0);
+  transport.start();
+  const slotSeconds = 15 / settings.bpm;
+  // The song's own slots, and room for the ending to ring out.
+  const limit = (song.bars + 1) * slotsPerBar(settings.signature) + Math.ceil(ENDING_SECONDS / slotSeconds) + 4;
+  for (let slot = 0; transport.running && slot < limit; slot++) transport.repeat(slot * slotSeconds);
+  return player.scribe.file();
 }
 
 // Records what the band plays, as it plays. The browser picks the format

@@ -30,7 +30,8 @@ The original lets you click the map and hear that spot's three chords. This vers
 - **A song.** Press play and a marker travels the route while a strummed guitar plays each stop's chords. Choose the time signature (4/4, 3/4, 6/8, 2/4, 5/4, 7/8), tempo, strum pattern, and whether each stop plays all three of its chords or just one. Changes take effect at the next bar line.
 - **A band.** A Style menu sets up a whole sound in one go (punk trio, campfire acoustic, reggae, waltz and so on). Underneath it you can pick the guitar (electric clean, crunch, fuzz, chorus or 12-string; steel-string, 12-string or nylon acoustic), switch on drums and bass that follow the strum pattern, choose a different drum style, and balance the three.
 - **Sharing.** The page address carries the trip and every sound setting, and the share button copies it. Opening a shared link shows a "Play this song" prompt, because browsers won't start audio without a click. The download button renders the song to a WAV file.
-- **Live sessions.** "Go live" follows the device's location: the cell you are in loops its three chords, and the chords change as you move into the next. Cells are about 50 m across on foot and grow with speed. Ending the session leaves the route as a trip you can replay or share, and offers what you heard as a download. The page keeps the screen awake while a session runs, because a web page cannot play from a locked phone. The route and recording last only until the page is closed. The page itself sends your location nowhere; the map does load tiles for wherever you are from CARTO, and a link to the route is made only if you choose to share it.
+- **MIDI.** The MIDI button saves the song's notes as a Standard MIDI File, for composing with in a music program (see below). A live session offers one too, of every bar as it was actually played.
+- **Live sessions.** "Go live" follows the device's location: the cell you are in loops its three chords, and the chords change as you move into the next. Cells are about 50 m across on foot and grow with speed. Ending the session leaves the route as a trip you can replay or share, and offers what you heard as a download, both as a recording and as MIDI. The page keeps the screen awake while a session runs, because a web page cannot play from a locked phone. The route and recording last only until the page is closed. The page itself sends your location nowhere; the map does load tiles for wherever you are from CARTO, and a link to the route is made only if you choose to share it.
 
 Most of the options are folded away. The page opens with start, end, style, time signature and tempo; route, rhythm and band details expand when wanted.
 
@@ -92,6 +93,16 @@ Within about ten metres of either pole the A5 library is not repeatable, so poin
 
 The scheme depends on how `a5-js` numbers its cells. The library is pinned at 0.10.1 and is not yet at version 1; if a later version numbered cells differently, upgrading would change every place's A5 chords.
 
+## The MIDI files
+
+A MIDI file holds notes, not sound, so the program that opens it decides what it sounds like.
+
+- **Tracks.** Guitar, bass and drums each get their own track (bass and drums only if they were switched on), and a first track carries the tempo, the time signature and a marker at every bar naming its chord.
+- **Guitar as heard.** Each strum is written the way it is played: strings a few milliseconds apart, down and up strums in their real order, accents as louder notes, and a 12-string's octave strings. The notes therefore sit slightly off the grid; quantise them in your music program if you want block chords.
+- **Instruments.** The guitar choice becomes the nearest General MIDI guitar (nylon, steel, clean electric, overdriven, distortion). Bass is fingered electric bass; drums use the standard drum channel (kick 36, rim 37, snare 38, closed hat 42, open hat 46).
+- **Left out.** The guitar tones, the reverb and the mix levels, which MIDI has no way to carry, and the small random looseness the band plays with, so the same song always gives the same file.
+- **Live sessions.** The file follows what was played bar by bar, including how long each cell looped and any change of tempo, time signature, rhythm or guitar along the way. Time spent paused is not in it. It carries no link and no coordinates.
+
 ## Differences from the original
 
 - MapLibre GL replaces Mapbox GL and deck.gl; jQuery and svguitar are gone. No API keys anywhere.
@@ -112,6 +123,7 @@ js/geocode.js    place search
 js/patterns.js   strum patterns, drum grooves, bass lines, styles
 js/band.js       sampled guitars and bass, synthesised drums, mixer
 js/audio.js      the player, offline rendering to WAV, live recording
+js/midi.js       writes what the band plays as a MIDI file
 js/live.js       live sessions: location -> stops
 js/link.js       trip and settings <-> URL hash
 js/diagram.js    chord box SVGs

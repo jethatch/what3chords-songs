@@ -10,7 +10,8 @@ import {
   PATTERNS, SIGNATURES, DRUM_STYLES, STYLES, findPattern, patternTokens, gridLabels, slotsPerBar,
 } from "./patterns.js";
 import { Band, GUITARS, findGuitar } from "./band.js";
-import { Player, LiveRecorder, renderSong, songSeconds } from "./audio.js";
+import { Player, LiveRecorder, renderSong, songToMidi, songSeconds } from "./audio.js";
+import { MidiScribe } from "./midi.js";
 import { LiveSession, liveSupport, paceName } from "./live.js";
 import { encodeState, decodeHash } from "./link.js";
 
@@ -99,6 +100,7 @@ let song = null;
 let spot = null; // { popup, chords } for the last clicked point
 let live = null; // { session, recorder, started, fix } while a live session runs
 let recordingUrl = null;
+let liveMidiUrl = null;
 const markers = { start: null, end: null, playhead: null };
 const places = {
   start: { input: $("start-input"), status: $("start-status"), candidates: $("start-candidates"), form: $("start-form"), lastQuery: "", searching: null, abort: null },
@@ -538,7 +540,7 @@ function renderRoute() {
   $("play").disabled = live ? !live.started : !route;
   $("play").title = live && !live.started ? "Waiting for your location" : "";
   $("stop").disabled = !route && !live;
-  for (const id of ["share", "download"]) {
+  for (const id of ["share", "download", "download-midi"]) {
     $(id).disabled = !route || Boolean(live);
     $(id).title = live ? "Available when the live session ends" : $(id).getAttribute("aria-label");
   }
@@ -1053,13 +1055,17 @@ function startLive() {
   live = {
     session: new LiveSession(grid(), { onStop: onLiveStop, onFix: onLiveFix, onError: onLiveError }),
     recorder: null,
+    scribe: null,
     started: false,
     fix: null,
   };
   setLiveStatus("Finding you…");
   $("live-download").hidden = true;
+  $("live-midi").hidden = true;
   if (recordingUrl) URL.revokeObjectURL(recordingUrl);
+  if (liveMidiUrl) URL.revokeObjectURL(liveMidiUrl);
   recordingUrl = null;
+  liveMidiUrl = null;
   renderLiveControls();
   renderRoute();
   live.session.start();
@@ -1126,6 +1132,15 @@ function onLiveStop(stop) {
 async function beginLiveSound() {
   const session = live;
   state.playing = "live";
+  // Every bar goes down as MIDI as it is played. No link goes into the
+  // file: a travelled route is only shared when its owner says so.
+  session.scribe = new MidiScribe({
+    transport: Tone.getTransport(),
+    guitar: () => state.guitar,
+    title: "what3chords live session",
+    about: `A live session played by what3chords songs on ${new Date().toISOString().slice(0, 10)}.`,
+  });
+  player.scribe = session.scribe;
   const started = await startAudio(() => player.play({
     bars: Infinity,
     // Always the newest stop; its three chords go round until there's a newer one.
@@ -1161,6 +1176,7 @@ async function endLive() {
   live = null;
   session.session.stop();
   stopPlayback();
+  player.scribe = null;
   renderLiveControls();
   $("follow").checked = false;
   if (!session.started) {
@@ -1172,6 +1188,7 @@ async function endLive() {
   setLiveStatus(`Recorded ${stops} ${stops === 1 ? "stop" : "stops"}. Replay it, change the band, or share it. It isn’t kept if you close this page.`);
   renderRoute();
   fitRoute();
+  if (session.scribe && !session.scribe.empty) offerLiveMidi(session.scribe.file());
   if (session.recorder) {
     try {
       const blob = await session.recorder.stop();
@@ -1190,6 +1207,16 @@ function offerRecording(blob) {
   link.href = recordingUrl;
   link.download = `what3chords-live.${extension}`;
   link.textContent = `Download the live recording (${formatSize(blob.size)})`;
+  link.hidden = false;
+}
+
+function offerLiveMidi(blob) {
+  if (liveMidiUrl) URL.revokeObjectURL(liveMidiUrl);
+  liveMidiUrl = URL.createObjectURL(blob);
+  const link = $("live-midi");
+  link.href = liveMidiUrl;
+  link.download = "what3chords-live.mid";
+  link.textContent = `Download the session as MIDI (${formatSize(blob.size)})`;
   link.hidden = false;
 }
 
@@ -1236,6 +1263,11 @@ async function share() {
   }
 }
 
+// "Boston → New York" -> "boston-to-new-york"
+function fileStem(title) {
+  return title.toLowerCase().replace(/→/g, "to").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "song";
+}
+
 async function downloadSong() {
   if (!state.route || live) return;
   const button = $("download");
@@ -1255,7 +1287,7 @@ async function downloadSong() {
       guitar: state.guitar,
       levels: state.levels,
     }, progress);
-    const name = `${title.toLowerCase().replace(/→/g, "to").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "song"}.wav`;
+    const name = `${fileStem(title)}.wav`;
     saveBlob(blob, name);
     toast(`Saved ${name} (${formatSize(blob.size)}).`);
   } catch (error) {
@@ -1263,6 +1295,29 @@ async function downloadSong() {
     toast(error.message || "The song couldn’t be rendered in this browser.");
   } finally {
     button.classList.remove("busy");
+  }
+}
+
+// The song's notes as a MIDI file, for a music program to open.
+function downloadMidi() {
+  if (!state.route || live) return;
+  const title = songTitle();
+  try {
+    const blob = songToMidi(makeSong(), {
+      signature: state.signature,
+      pattern: findPattern(state.signature, state.patternId),
+      bpm: state.bpm,
+      drums: state.drums,
+      drumStyle: state.drumStyle,
+      bass: state.bass,
+      guitar: state.guitar,
+    }, title.replace(/→/g, "to"), `Made with what3chords songs. ${location.href}`);
+    const name = `${fileStem(title)}.mid`;
+    saveBlob(blob, name);
+    toast(`Saved ${name} (${formatSize(blob.size)}).`);
+  } catch (error) {
+    console.warn(error);
+    toast("The MIDI file couldn’t be written in this browser.");
   }
 }
 
@@ -1589,6 +1644,7 @@ function bindControls() {
   $("stop").addEventListener("click", stopAndRewind);
   $("share").addEventListener("click", share);
   $("download").addEventListener("click", downloadSong);
+  $("download-midi").addEventListener("click", downloadMidi);
   $("share-cancel").addEventListener("click", () => $("share-dialog").close());
   $("share-confirm").addEventListener("click", () => {
     $("share-dialog").close();

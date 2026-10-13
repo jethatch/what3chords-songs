@@ -133,6 +133,7 @@
           <p class="live-status" id="live-status" role="status"></p>
           <p class="live-note" id="live-note" hidden>The screen is kept awake while this runs; if the phone locks anyway, the music stops. This page doesn’t send your location anywhere, though the map loads the tiles for wherever you are.</p>
           <a class="button quiet live-download" id="live-download" hidden></a>
+          <a class="button quiet live-download" id="live-midi" hidden></a>
         </div>
       </section>
 
@@ -246,6 +247,7 @@
           <button type="button" id="download" class="icon-button" disabled aria-label="Download this song as an audio file" title="Download this song as an audio file">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0-4-4m4 4 4-4M5 19h14"/></svg>
           </button>
+          <button type="button" id="download-midi" class="icon-button wordy" disabled aria-label="Download this song as a MIDI file" title="Download this song as a MIDI file">MIDI</button>
           <label class="follow" title="Keep the map centred on the playhead">
             <input type="checkbox" id="follow"><span>Follow</span>
           </label>
@@ -296,11 +298,11 @@
     </ul>
     <h3>Playing it</h3>
     <p>Pick a style for a ready-made band, or set the time signature and tempo yourself. Open <strong>Rhythm</strong> to choose the strum pattern and <strong>Band</strong> to choose the guitar, add drums and bass, and balance them. Press play (or the space bar). Changes take effect at the next bar line, so you can rearrange the song while it plays. Select any stop in the chord chart to jump there.</p>
-    <p>The share button copies a link that opens this trip with this sound. The download button saves the song as a WAV file.</p>
+    <p>The share button copies a link that opens this trip with this sound. The download button saves the song as a WAV file. The MIDI button saves its notes instead (guitar, bass and drums on separate tracks, with each bar’s chord named) for opening in a music program; a MIDI file carries no sound of its own, so the guitar tone and the mix are not in it.</p>
     <p class="fine">On an iPhone, flip the ring/silent switch to ring if you hear nothing.</p>
     <h3>Going live</h3>
     <p><strong>Go live</strong> follows your location instead of a planned route. The cell you are in plays its three chords (those of its centre point) round and round until you cross into the next, so a cell sounds the same every time and for everyone. Cells are about 50 m across on foot and larger when you travel faster, because a phone’s sense of where it is wanders by several metres.</p>
-    <p>The page keeps the screen awake while a session runs, because a web page cannot keep playing once the phone locks. When you end the session the route becomes an ordinary trip you can replay, and a recording of what you heard can be downloaded. Neither is kept once you close the page.</p>
+    <p>The page keeps the screen awake while a session runs, because a web page cannot keep playing once the phone locks. When you end the session the route becomes an ordinary trip you can replay, and what you heard can be downloaded, as a recording and as a MIDI file of every bar as it was played. None of it is kept once you close the page.</p>
     <p>This page does not send your location anywhere. Two things to know: the map loads its tiles for wherever you are from CARTO, as any online map does, and a link to the route is only made if you press share and agree.</p>
     <h3>Credits</h3>
     <p class="fine">Preview: apart from “What is this?”, the explanatory text on this page was written by Claude, Anthropic’s AI model, while building this version. The original authors have not yet reviewed it.</p>
